@@ -1,9 +1,11 @@
 package com.example.netconnect_tool.ui
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.netconnect_tool.data.CampusNetworkClient
 import com.example.netconnect_tool.data.CredentialStore
+import com.example.netconnect_tool.data.UpdateChecker
 import com.example.netconnect_tool.data.model.Dashboard
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,9 +19,19 @@ sealed interface DashboardUiState {
     data class Error(val message: String) : DashboardUiState
 }
 
+sealed interface UpdateState {
+    data object Idle : UpdateState
+    data object Checking : UpdateState
+    data class UpdateAvailable(val release: UpdateChecker.ReleaseInfo) : UpdateState
+    data object UpToDate : UpdateState
+    data class Error(val message: String) : UpdateState
+}
+
 class DashboardViewModel(
     private val client: CampusNetworkClient = CampusNetworkClient(),
-    private val credentialStore: CredentialStore? = null
+    private val credentialStore: CredentialStore? = null,
+    private val updateChecker: UpdateChecker = UpdateChecker(),
+    private val currentVersion: String = "1.0"
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<DashboardUiState>(DashboardUiState.Loading)
@@ -33,6 +45,9 @@ class DashboardViewModel(
 
     private val _needLogin = MutableStateFlow(false)
     val needLogin: StateFlow<Boolean> = _needLogin.asStateFlow()
+
+    private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
+    val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
 
     init {
         CachedDashboard.get()?.let { dashboard ->
@@ -67,6 +82,28 @@ class DashboardViewModel(
         }
     }
 
+    fun checkForUpdate() {
+        if (_updateState.value is UpdateState.Checking) return
+        _updateState.value = UpdateState.Checking
+        viewModelScope.launch {
+            updateChecker.checkLatestRelease(currentVersion)
+                .onSuccess { release ->
+                    _updateState.value = if (release != null) {
+                        UpdateState.UpdateAvailable(release)
+                    } else {
+                        UpdateState.UpToDate
+                    }
+                }
+                .onFailure { e ->
+                    _updateState.value = UpdateState.Error(e.message ?: "检查更新失败")
+                }
+        }
+    }
+
+    fun dismissUpdateState() {
+        _updateState.value = UpdateState.Idle
+    }
+
     fun consumeNeedLoginEvent() {
         _needLogin.value = false
     }
@@ -81,5 +118,16 @@ class DashboardViewModel(
 
     fun consumeLoggedOutEvent() {
         _loggedOut.value = false
+    }
+}
+
+/** 从 Context 读取当前 App 版本名 */
+fun currentVersionName(context: Context): String {
+    return try {
+        val pm = context.packageManager
+        val info = pm.getPackageInfo(context.packageName, 0)
+        info.versionName ?: "1.0"
+    } catch (_: Exception) {
+        "1.0"
     }
 }

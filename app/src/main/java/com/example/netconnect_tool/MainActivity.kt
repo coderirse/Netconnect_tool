@@ -14,6 +14,7 @@ import com.example.netconnect_tool.ui.DashboardScreen
 import com.example.netconnect_tool.ui.DashboardViewModel
 import com.example.netconnect_tool.ui.LoginScreen
 import com.example.netconnect_tool.ui.LoginViewModel
+import com.example.netconnect_tool.ui.currentVersionName
 import com.example.netconnect_tool.ui.theme.Netconnect_toolTheme
 
 class MainActivity : ComponentActivity() {
@@ -21,16 +22,17 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val credentialStore = CredentialStore(this)
+        val versionName = currentVersionName(this)
         setContent {
             Netconnect_toolTheme {
-                AppNavigation(credentialStore = credentialStore)
+                AppNavigation(credentialStore = credentialStore, currentVersion = versionName)
             }
         }
     }
 }
 
 @Composable
-private fun AppNavigation(credentialStore: CredentialStore) {
+private fun AppNavigation(credentialStore: CredentialStore, currentVersion: String) {
     val navController = rememberNavController()
     NavHost(navController = navController, startDestination = "dashboard") {
         composable("login") {
@@ -48,7 +50,7 @@ private fun AppNavigation(credentialStore: CredentialStore) {
         }
         composable("dashboard") {
             val viewModel: DashboardViewModel = viewModel {
-                DashboardViewModel(credentialStore = credentialStore)
+                DashboardViewModel(credentialStore = credentialStore, currentVersion = currentVersion)
             }
             DashboardScreen(
                 viewModel = viewModel,

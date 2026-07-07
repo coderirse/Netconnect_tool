@@ -32,13 +32,15 @@ class DashboardParser {
             else BulletinItem(title = title, date = dateText, location = location, link = link)
         }
 
-        Log.i(TAG, "解析: account=$account, balance=$balance, v4=$trafficV4, v6=$trafficV6, time=$usedTime, login=$loginTime, ip4=$ipv4")
+        Log.i(TAG, "解析: account=$account, balance=$balance, v4=${trafficV4.display}(${trafficV4.kb}KB), v6=${trafficV6.display}(${trafficV6.kb}KB), time=$usedTime, login=$loginTime, ip4=$ipv4")
 
         return Dashboard(
             account = account,
             balance = balance,
-            usedTrafficV4 = trafficV4,
-            usedTrafficV6 = trafficV6,
+            usedTrafficV4 = trafficV4.display,
+            usedTrafficV6 = trafficV6.display,
+            usedTrafficV4Kb = trafficV4.kb,
+            usedTrafficV6Kb = trafficV6.kb,
             usedTimeMinutes = usedTime,
             loginTime = loginTime,
             ipv4 = ipv4,
@@ -66,41 +68,47 @@ class DashboardParser {
         return ""
     }
 
-    private fun extractTrafficV4(html: String, doc: Document): String {
-        doc.selectFirst("#user_useflow p")?.text()?.trim()?.let { if (it.isNotBlank()) return it }
-        doc.selectFirst("#user_useflow")?.text()?.trim()?.let { if (it.isNotBlank()) return it }
+    private fun extractTrafficV4(html: String, doc: Document): TrafficInfo {
+        doc.selectFirst("#user_useflow p")?.text()?.trim()?.let { if (it.isNotBlank()) return TrafficInfo(it, parseTrafficToKb(it)) }
+        doc.selectFirst("#user_useflow")?.text()?.trim()?.let { if (it.isNotBlank()) return TrafficInfo(it, parseTrafficToKb(it)) }
         // 正则从 HTML 字符串直接提取（不依赖 Jsoup）
-        Regex("""id=["']user_useflow["'][^>]*>\s*<p[^>]*>([^<]+)</p>""").find(html)?.groupValues?.getOrNull(1)?.trim()?.let { return it }
+        Regex("""id=["']user_useflow["'][^>]*>\s*<p[^>]*>([^<]+)</p>""").find(html)?.groupValues?.getOrNull(1)?.trim()?.let {
+            if (it.isNotBlank()) return TrafficInfo(it, parseTrafficToKb(it))
+        }
         // JS 变量回退
         extractJsVariable(html, "flow")?.trim()?.toLongOrNull()?.let { flow ->
-            return formatTraffic(flow)
+            return TrafficInfo(formatTraffic(flow), flow)
         }
-        return ""
+        return TrafficInfo("", 0L)
     }
 
-    private fun extractTrafficV6(html: String, doc: Document): String {
+    private fun extractTrafficV6(html: String, doc: Document): TrafficInfo {
         // 1. Jsoup selector
-        doc.selectFirst("#user_useflowV6 p")?.text()?.trim()?.let { if (it.isNotBlank()) return it }
-        doc.selectFirst("#user_useflowV6")?.text()?.trim()?.let { if (it.isNotBlank()) return it }
+        doc.selectFirst("#user_useflowV6 p")?.text()?.trim()?.let { if (it.isNotBlank()) return TrafficInfo(it, parseTrafficToKb(it)) }
+        doc.selectFirst("#user_useflowV6")?.text()?.trim()?.let { if (it.isNotBlank()) return TrafficInfo(it, parseTrafficToKb(it)) }
 
         // 2. 正则从 HTML 字符串提取
-        Regex("""id=["']user_useflowV6["'][^>]*>\s*<p[^>]*>([^<]+)</p>""").find(html)?.groupValues?.getOrNull(1)?.trim()?.let { if (it.isNotBlank()) return it }
+        Regex("""id=["']user_useflowV6["'][^>]*>\s*<p[^>]*>([^<]+)</p>""").find(html)?.groupValues?.getOrNull(1)?.trim()?.let {
+            if (it.isNotBlank()) return TrafficInfo(it, parseTrafficToKb(it))
+        }
 
         // 3. 从 "流量(V6)" 标签后面搜索最近的 MB/GB 值
         val v6LabelIdx = html.indexOf("流量(V6)", ignoreCase = true)
         if (v6LabelIdx >= 0) {
             val afterLabel = html.substring(v6LabelIdx, (v6LabelIdx + 500).coerceAtMost(html.length))
             Log.i(TAG, "找到 '流量(V6)' 标签，后续内容: ${afterLabel.take(200)}")
-            Regex("""(\d+\.?\d*\s*(?:MB|GB|KB))""").find(afterLabel)?.groupValues?.getOrNull(1)?.let { return it }
+            Regex("""(\d+\.?\d*\s*(?:MB|GB|KB))""").find(afterLabel)?.groupValues?.getOrNull(1)?.let {
+                return TrafficInfo(it, parseTrafficToKb(it))
+            }
         }
 
         // 4. JS 变量 v6af（V6 流量，单位 KB）回退
         extractJsVariable(html, "v6af")?.trim()?.toLongOrNull()?.let { v6 ->
-            return formatTraffic(v6)
+            return TrafficInfo(formatTraffic(v6), v6)
         }
         // 5. 其他可能的变量名
         listOf("flowV6", "v6flow", "flow_v6").forEach { varName ->
-            extractJsVariable(html, varName)?.trim()?.toLongOrNull()?.let { return formatTraffic(it) }
+            extractJsVariable(html, varName)?.trim()?.toLongOrNull()?.let { return TrafficInfo(formatTraffic(it), it) }
         }
 
         // 6. 搜索 useflowV6 附近内容（日志排查用）
@@ -112,7 +120,19 @@ class DashboardParser {
             Log.i(TAG, "HTML 里完全没找到 useflowV6")
         }
 
-        return ""
+        return TrafficInfo("", 0L)
+    }
+
+    /** 把 "12.34 GB" / "567 MB" / "890 KB" 之类的字符串解析为 KB 数 */
+    private fun parseTrafficToKb(s: String): Long {
+        val match = Regex("""([\d.]+)\s*(GB|MB|KB)""", RegexOption.IGNORE_CASE).find(s) ?: return 0L
+        val value = match.groupValues[1].toDoubleOrNull() ?: return 0L
+        return when (match.groupValues[2].uppercase()) {
+            "GB" -> (value * 1024 * 1024).toLong()
+            "MB" -> (value * 1024).toLong()
+            "KB" -> value.toLong()
+            else -> 0L
+        }
     }
 
     private fun formatTraffic(kb: Long): String {
@@ -122,6 +142,8 @@ class DashboardParser {
             else -> "$kb KB"
         }
     }
+
+    private data class TrafficInfo(val display: String, val kb: Long)
 
     /** 匹配 JS 变量赋值：name='value'（带引号）或 name=value;（无引号） */
     private fun extractJsVariable(html: String, name: String): String? {
