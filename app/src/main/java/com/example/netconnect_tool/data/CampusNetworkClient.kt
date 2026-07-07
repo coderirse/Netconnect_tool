@@ -67,8 +67,15 @@ class CampusNetworkClient {
                 Log.i(TAG, "最终获取的 wlan_user_ip: $wlanUserIp")
 
                 // 第 2 步：尝试 ePortal 4.x 登录
-                // 不同部署用 0-based 或 1-based carrier id，两种都试
-                val candidateAccounts = listOf("0,$account", "1,$account")
+                // 不同部署用 0-based 或 1-based carrier id，两种都试；
+                // 运营商后缀也要单独尝试（@dx / @lt），共 4 种组合
+                val suffix = carrier.suffix
+                val candidateAccounts = listOf(
+                    "0,$account",
+                    "1,$account",
+                    "0,$account$suffix",
+                    "1,$account$suffix"
+                ).distinct()
 
                 var lastErrorMsg: String? = null
 
@@ -198,14 +205,27 @@ class CampusNetworkClient {
 
     suspend fun logout(): Result<Unit> = withContext(Dispatchers.IO) {
         try {
+            // 先访问首页拿到 wlan_user_ip（ePortal 注销必须带这个参数，否则服务端不踢会话）
+            val (_, homeHtml) = fetchPageWithUrl("http://$HOST/")
+            val ip = extractIpFromHtml(homeHtml)
+            Log.i(TAG, "注销：从首页拿到 IP=$ip")
+
             val ts = System.currentTimeMillis()
-            val url = "http://$HOST:801/eportal/portal/logout?callback=dr1004&jsVersion=4.1&terminal_type=1&lang=zh&v=$ts"
+            val url = buildString {
+                append("http://$HOST:801/eportal/portal/logout?callback=dr1004&")
+                if (!ip.isNullOrEmpty()) {
+                    append("wlan_user_ip=$ip&")
+                }
+                append("jsVersion=4.1&terminal_type=1&lang=zh&v=$ts")
+            }
             val request = Request.Builder()
                 .url(url)
                 .header("User-Agent", BROWSER_UA)
                 .header("Referer", "http://$HOST/")
                 .build()
-            client.newCall(request).execute().close()
+            client.newCall(request).execute().use { response ->
+                Log.i(TAG, "注销响应: code=${response.code}")
+            }
             cookieJar.clear()
             Result.success(Unit)
         } catch (e: Exception) {
