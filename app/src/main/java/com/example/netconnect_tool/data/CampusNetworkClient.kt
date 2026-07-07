@@ -71,7 +71,8 @@ class CampusNetworkClient {
                 val candidateAccounts = listOf("0,$account", "1,$account")
 
                 var lastErrorMsg: String? = null
-                var lastResponseSnippet: String? = null
+                var lastResponseSnippet: String = ""
+                var lastHttpCode: Int = -1
 
                 for (userAccount in candidateAccounts) {
                     val ts = System.currentTimeMillis()
@@ -89,11 +90,27 @@ class CampusNetworkClient {
                     }
                     Log.i(TAG, "尝试 user_account=$userAccount")
 
-                    val (_, loginResponse) = fetchPageWithUrl(loginApiUrl)
-                    Log.i(TAG, "登录响应前 500 字符: ${loginResponse.take(500)}")
+                    val loginRequest = Request.Builder()
+                        .url(loginApiUrl)
+                        .header("User-Agent", BROWSER_UA)
+                        .header("Referer", "http://$HOST/")
+                        .build()
+                    val loginResponse: String
+                    try {
+                        client.newCall(loginRequest).execute().use { resp ->
+                            lastHttpCode = resp.code
+                            loginResponse = resp.body?.string() ?: ""
+                            Log.i(TAG, "登录 API: HTTP ${resp.code}, body长度=${loginResponse.length}, 前500字符=${loginResponse.take(500)}")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "登录 API 请求异常", e)
+                        lastErrorMsg = "登录 API 请求失败: ${e.message}"
+                        lastResponseSnippet = e.message ?: "异常"
+                        continue
+                    }
                     lastResponseSnippet = loginResponse.take(200)
 
-                    // 兜底：响应直接是 dashboard HTML（已登录状态再次调用 login API 时常见）
+                    // 兜底 1：响应直接是 dashboard HTML（已登录状态再次调用 login API 时常见）
                     if (loginResponse.contains("user_account", ignoreCase = true) ||
                         loginResponse.contains("v4ip", ignoreCase = true)
                     ) {
@@ -108,6 +125,14 @@ class CampusNetworkClient {
                     val jsonMatch = Regex("""dr1003\((\{[\s\S]*\})\)""").find(loginResponse)
                     if (jsonMatch == null) {
                         Log.w(TAG, "JSONP 匹配失败，响应前 300 字符: ${loginResponse.take(300)}")
+                        // 兜底 2：响应不是 JSONP（常见于空响应），可能是服务端认为已登录
+                        // 再拉一次首页验证
+                        val (_, retryHtml) = fetchPageWithUrl("http://$HOST/")
+                        val retryDashboard = parser.parse(retryHtml)
+                        if (retryDashboard.account.isNotBlank()) {
+                            Log.i(TAG, "✅ 登录 API 返回非 JSONP，但首页显示已登录 (account=${retryDashboard.account})，返回 dashboard")
+                            return@withContext Result.success(retryDashboard)
+                        }
                         if (lastErrorMsg == null) {
                             lastErrorMsg = "无法解析 ePortal 登录响应"
                         }
@@ -134,12 +159,17 @@ class CampusNetworkClient {
                     // 任何错误都试下一个候选，最后再统一返回
                 }
 
-                val finalMsg = if (lastResponseSnippet != null && lastErrorMsg?.contains("无法解析") == true) {
-                    "$lastErrorMsg\n响应片段: $lastResponseSnippet"
-                } else {
-                    lastErrorMsg ?: "登录失败"
+                val finalMsg = buildString {
+                    appendLine(lastErrorMsg ?: "登录失败")
+                    appendLine("HTTP $lastHttpCode, 响应 ${lastResponseSnippet.length} 字符")
+                    if (lastResponseSnippet.isNotBlank()) {
+                        appendLine("响应: $lastResponseSnippet")
+                    } else {
+                        appendLine("响应为空 — 服务端可能认为已登录，或端口 801 不可达")
+                    }
+                    appendLine("首页前 150 字符: ${homeHtml.take(150)}")
                 }
-                return@withContext Result.failure(LoginException(finalMsg))
+                return@withContext Result.failure(LoginException(finalMsg.trim()))
             } catch (e: Exception) {
                 Log.e(TAG, "登录异常", e)
                 Result.failure(
@@ -202,9 +232,16 @@ class CampusNetworkClient {
     suspend fun logout(): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             // 先访问首页拿到 wlan_user_ip（ePortal 注销必须带这个参数，否则服务端不踢会话）
-            val (_, homeHtml) = fetchPageWithUrl("http://$HOST/")
-            val ip = extractIpFromHtml(homeHtml)
+            val (homeUrl, homeHtml) = fetchPageWithUrl("http://$HOST/")
+            var ip = extractIpFromUrl(homeUrl) ?: extractIpFromHtml(homeHtml)
             Log.i(TAG, "注销：从首页拿到 IP=$ip")
+
+            // IP 没拿到，试 1.1.1.1 触发重定向
+            if (ip == null) {
+                val (redirectUrl, _) = fetchPageWithUrl("http://1.1.1.1/")
+                ip = extractIpFromUrl(redirectUrl)
+                Log.i(TAG, "注销：从 1.1.1.1 重定向拿到 IP=$ip")
+            }
 
             val ts = System.currentTimeMillis()
             val url = buildString {
