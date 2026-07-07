@@ -1,0 +1,33 @@
+# Gradle / Build
+.gradle/
+build/
+/app/build/
+captures/
+.cxx/
+.externalNativeBuild/
+
+# Local config (contains SDK paths, signing keys, personal info)
+local.properties
+gradle.properties.local
+
+# IntelliJ / Android Studio
+*.iml
+.idea/
+*.ipr
+*.iws
+
+# Signing / keystore (NEVER commit)
+*.jks
+*.keystore
+keystore.properties
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Sensitive credentials captured during development
+*.har
+nettrace.txt
