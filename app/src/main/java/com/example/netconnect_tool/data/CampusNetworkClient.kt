@@ -67,17 +67,11 @@ class CampusNetworkClient {
                 Log.i(TAG, "最终获取的 wlan_user_ip: $wlanUserIp")
 
                 // 第 2 步：尝试 ePortal 4.x 登录
-                // 不同部署用 0-based 或 1-based carrier id，两种都试；
-                // 运营商后缀也要单独尝试（@dx / @lt），共 4 种组合
-                val suffix = carrier.suffix
-                val candidateAccounts = listOf(
-                    "0,$account",
-                    "1,$account",
-                    "0,$account$suffix",
-                    "1,$account$suffix"
-                ).distinct()
+                // 不同部署用 0-based 或 1-based carrier id，两种都试
+                val candidateAccounts = listOf("0,$account", "1,$account")
 
                 var lastErrorMsg: String? = null
+                var lastResponseSnippet: String? = null
 
                 for (userAccount in candidateAccounts) {
                     val ts = System.currentTimeMillis()
@@ -97,6 +91,7 @@ class CampusNetworkClient {
 
                     val (_, loginResponse) = fetchPageWithUrl(loginApiUrl)
                     Log.i(TAG, "登录响应前 500 字符: ${loginResponse.take(500)}")
+                    lastResponseSnippet = loginResponse.take(200)
 
                     // 兜底：响应直接是 dashboard HTML（已登录状态再次调用 login API 时常见）
                     if (loginResponse.contains("user_account", ignoreCase = true) ||
@@ -113,7 +108,9 @@ class CampusNetworkClient {
                     val jsonMatch = Regex("""dr1003\((\{[\s\S]*\})\)""").find(loginResponse)
                     if (jsonMatch == null) {
                         Log.w(TAG, "JSONP 匹配失败，响应前 300 字符: ${loginResponse.take(300)}")
-                        lastErrorMsg = "无法解析 ePortal 登录响应"
+                        if (lastErrorMsg == null) {
+                            lastErrorMsg = "无法解析 ePortal 登录响应"
+                        }
                         continue
                     }
                     val json = jsonMatch.groupValues[1]
@@ -134,16 +131,15 @@ class CampusNetworkClient {
                     }
 
                     lastErrorMsg = msg ?: "登录失败 (result=$result)"
-                    // "超时"通常是格式问题，继续试下一个；其他错误直接返回
-                    val isTimeout = msg?.contains("超时") == true || msg?.contains("timeout") == true
-                    if (!isTimeout) {
-                        return@withContext Result.failure(LoginException(lastErrorMsg!!))
-                    }
+                    // 任何错误都试下一个候选，最后再统一返回
                 }
 
-                return@withContext Result.failure(
-                    LoginException(lastErrorMsg ?: "登录失败")
-                )
+                val finalMsg = if (lastResponseSnippet != null && lastErrorMsg?.contains("无法解析") == true) {
+                    "$lastErrorMsg\n响应片段: $lastResponseSnippet"
+                } else {
+                    lastErrorMsg ?: "登录失败"
+                }
+                return@withContext Result.failure(LoginException(finalMsg))
             } catch (e: Exception) {
                 Log.e(TAG, "登录异常", e)
                 Result.failure(
@@ -218,17 +214,30 @@ class CampusNetworkClient {
                 }
                 append("jsVersion=4.1&terminal_type=1&lang=zh&v=$ts")
             }
+            Log.i(TAG, "注销 URL: $url")
             val request = Request.Builder()
                 .url(url)
                 .header("User-Agent", BROWSER_UA)
                 .header("Referer", "http://$HOST/")
                 .build()
             client.newCall(request).execute().use { response ->
-                Log.i(TAG, "注销响应: code=${response.code}")
+                val body = response.body?.string() ?: ""
+                Log.i(TAG, "注销响应: code=${response.code}, body=${body.take(300)}")
             }
+
+            // 验证是否真的注销了：再拉一次首页，如果还能拿到 account 说明服务端没踢
+            val (_, verifyHtml) = fetchPageWithUrl("http://$HOST/")
+            val verifyDashboard = parser.parse(verifyHtml)
+            if (verifyDashboard.account.isNotBlank()) {
+                Log.w(TAG, "⚠️ 注销后仍能拿到 dashboard (account=${verifyDashboard.account})，服务端会话未断")
+            } else {
+                Log.i(TAG, "✅ 注销验证通过，首页已无 account")
+            }
+
             cookieJar.clear()
             Result.success(Unit)
         } catch (e: Exception) {
+            Log.e(TAG, "注销异常", e)
             cookieJar.clear()
             Result.failure(e)
         }
