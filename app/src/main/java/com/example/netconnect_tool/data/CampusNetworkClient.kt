@@ -89,9 +89,23 @@ class CampusNetworkClient {
                     Log.i(TAG, "尝试 user_account=$userAccount")
 
                     val (_, loginResponse) = fetchPageWithUrl(loginApiUrl)
+                    Log.i(TAG, "登录响应前 500 字符: ${loginResponse.take(500)}")
 
-                    val jsonMatch = Regex("""dr1003\((\{.*\})\)""").find(loginResponse)
+                    // 兜底：响应直接是 dashboard HTML（已登录状态再次调用 login API 时常见）
+                    if (loginResponse.contains("user_account", ignoreCase = true) ||
+                        loginResponse.contains("v4ip", ignoreCase = true)
+                    ) {
+                        val dashboard = parser.parse(loginResponse)
+                        if (dashboard.account.isNotBlank()) {
+                            Log.i(TAG, "✅ 响应是 HTML 且已登录，直接返回 dashboard")
+                            return@withContext Result.success(dashboard)
+                        }
+                    }
+
+                    // 匹配 JSONP：dr1003({...})，允许跨行
+                    val jsonMatch = Regex("""dr1003\((\{[\s\S]*\})\)""").find(loginResponse)
                     if (jsonMatch == null) {
+                        Log.w(TAG, "JSONP 匹配失败，响应前 300 字符: ${loginResponse.take(300)}")
                         lastErrorMsg = "无法解析 ePortal 登录响应"
                         continue
                     }
