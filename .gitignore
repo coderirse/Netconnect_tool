@@ -31,3 +31,6 @@ Thumbs.db
 # Sensitive credentials captured during development
 *.har
 nettrace.txt
+
+# Internal handoff doc (not for public repo)
+HANDOFF.md

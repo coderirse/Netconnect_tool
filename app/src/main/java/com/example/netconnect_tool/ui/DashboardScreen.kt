@@ -59,6 +59,7 @@ fun DashboardScreen(
     val loggedOut by viewModel.loggedOut.collectAsStateWithLifecycle()
     val needLogin by viewModel.needLogin.collectAsStateWithLifecycle()
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
+    val logoutError by viewModel.logoutError.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     LaunchedEffect(loggedOut) {
@@ -121,6 +122,32 @@ fun DashboardScreen(
                 onDismiss = viewModel::dismissUpdateState,
                 onOpenRelease = { url -> openUrl(context, url) }
             )
+
+            if (logoutError != null) {
+                AlertDialog(
+                    onDismissRequest = viewModel::consumeLogoutError,
+                    title = { Text("注销未生效") },
+                    text = {
+                        Text(
+                            text = logoutError ?: "",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = viewModel::consumeLogoutError) {
+                            Text("知道了")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = {
+                            viewModel.consumeLogoutError()
+                            viewModel.logout()
+                        }) {
+                            Text("重试")
+                        }
+                    }
+                )
+            }
         }
     }
 }

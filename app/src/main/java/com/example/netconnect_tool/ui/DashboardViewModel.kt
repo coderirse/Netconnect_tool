@@ -49,8 +49,14 @@ class DashboardViewModel(
     private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
     val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
 
+    private val _logoutError = MutableStateFlow<String?>(null)
+    val logoutError: StateFlow<String?> = _logoutError.asStateFlow()
+
+    private var lastKnownIp: String? = null
+
     init {
         CachedDashboard.get()?.let { dashboard ->
+            lastKnownIp = dashboard.ipv4.takeIf { it.isNotBlank() }
             _uiState.value = DashboardUiState.Success(dashboard)
             CachedDashboard.clear()
         } ?: run {
@@ -65,6 +71,7 @@ class DashboardViewModel(
             val wasInitial = _uiState.value is DashboardUiState.Loading
             client.fetchDashboard()
                 .onSuccess { dashboard ->
+                    lastKnownIp = dashboard.ipv4.takeIf { it.isNotBlank() }
                     _uiState.value = DashboardUiState.Success(dashboard)
                 }
                 .onFailure { e ->
@@ -110,14 +117,24 @@ class DashboardViewModel(
 
     fun logout() {
         viewModelScope.launch {
-            client.logout()
-            credentialStore?.clear()
-            _loggedOut.value = true
+            _logoutError.value = null
+            client.logout(knownIp = lastKnownIp)
+                .onSuccess {
+                    credentialStore?.clear()
+                    _loggedOut.value = true
+                }
+                .onFailure { e ->
+                    _logoutError.value = e.message ?: "注销失败，请重试或手动断开 WiFi"
+                }
         }
     }
 
     fun consumeLoggedOutEvent() {
         _loggedOut.value = false
+    }
+
+    fun consumeLogoutError() {
+        _logoutError.value = null
     }
 }
 

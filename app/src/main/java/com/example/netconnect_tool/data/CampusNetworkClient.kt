@@ -229,26 +229,42 @@ class CampusNetworkClient {
         return String(bytes, Charsets.UTF_8)
     }
 
-    suspend fun logout(): Result<Unit> = withContext(Dispatchers.IO) {
+    /**
+     * @param knownIp 调用方已知的本机 IP（通常是 dashboard.ipv4）。优先级最高，因为
+     *                已登录状态下访问首页拿到的是 dashboard 页面，URL 里未必还带 wlan_user_ip。
+     */
+    suspend fun logout(knownIp: String? = null): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            // 先访问首页拿到 wlan_user_ip（ePortal 注销必须带这个参数，否则服务端不踢会话）
+            // IP 采集优先级：调用方传入 → 首页 HTML → 首页 URL → 1.1.1.1 重定向 → baidu 重定向
             val (homeUrl, homeHtml) = fetchPageWithUrl("http://$HOST/")
-            var ip = extractIpFromUrl(homeUrl) ?: extractIpFromHtml(homeHtml)
-            Log.i(TAG, "注销：从首页拿到 IP=$ip")
+            var ip = knownIp
+                ?: extractIpFromHtml(homeHtml)
+                ?: extractIpFromUrl(homeUrl)
+            Log.i(TAG, "注销：knownIp=$knownIp, 首页拿到 IP=$ip")
 
-            // IP 没拿到，试 1.1.1.1 触发重定向
             if (ip == null) {
-                val (redirectUrl, _) = fetchPageWithUrl("http://1.1.1.1/")
-                ip = extractIpFromUrl(redirectUrl)
-                Log.i(TAG, "注销：从 1.1.1.1 重定向拿到 IP=$ip")
+                val (redirectUrl1, _) = fetchPageWithUrl("http://1.1.1.1/")
+                ip = extractIpFromUrl(redirectUrl1)
+                Log.i(TAG, "注销：从 1.1.1.1 重定向拿到 IP=$ip, redirectUrl=$redirectUrl1")
+            }
+            if (ip == null) {
+                val (redirectUrl2, _) = fetchPageWithUrl("http://www.baidu.com/")
+                ip = extractIpFromUrl(redirectUrl2)
+                Log.i(TAG, "注销：从 baidu 重定向拿到 IP=$ip, redirectUrl=$redirectUrl2")
+            }
+
+            if (ip.isNullOrEmpty()) {
+                Log.e(TAG, "注销失败：无法获取 wlan_user_ip，服务端不会踢会话")
+                cookieJar.clear()
+                return@withContext Result.failure(
+                    LogoutException("无法获取本机 IP，注销未发送。请手动断开 WiFi 重试。")
+                )
             }
 
             val ts = System.currentTimeMillis()
             val url = buildString {
                 append("http://$HOST:801/eportal/portal/logout?callback=dr1004&")
-                if (!ip.isNullOrEmpty()) {
-                    append("wlan_user_ip=$ip&")
-                }
+                append("wlan_user_ip=$ip&")
                 append("jsVersion=4.1&terminal_type=1&lang=zh&v=$ts")
             }
             Log.i(TAG, "注销 URL: $url")
@@ -257,9 +273,25 @@ class CampusNetworkClient {
                 .header("User-Agent", BROWSER_UA)
                 .header("Referer", "http://$HOST/")
                 .build()
+            var apiOk = false
+            var apiBody = ""
+            var apiCode = 0
             client.newCall(request).execute().use { response ->
-                val body = response.body?.string() ?: ""
-                Log.i(TAG, "注销响应: code=${response.code}, body=${body.take(300)}")
+                apiBody = response.body?.string() ?: ""
+                apiCode = response.code
+                Log.i(TAG, "注销响应: code=${response.code}, body=${apiBody.take(300)}")
+                // ePortal 成功响应通常是 dr1004({"result":"1",...}) 或 dr1004({"result":...})
+                val jsonMatch = Regex("""dr1004\(\{[\s\S]*\}\)""").find(apiBody)
+                if (jsonMatch != null) {
+                    val resultVal = Regex(""""result"\s*:\s*"?(\w+)"?""").find(apiBody)?.groupValues?.getOrNull(1)
+                    if (resultVal == "1") {
+                        apiOk = true
+                    } else {
+                        Log.w(TAG, "注销 result=$resultVal")
+                    }
+                } else if (apiBody.contains("ok", ignoreCase = true) || apiBody.contains("success", ignoreCase = true)) {
+                    apiOk = true
+                }
             }
 
             // 验证是否真的注销了：再拉一次首页，如果还能拿到 account 说明服务端没踢
@@ -267,10 +299,18 @@ class CampusNetworkClient {
             val verifyDashboard = parser.parse(verifyHtml)
             if (verifyDashboard.account.isNotBlank()) {
                 Log.w(TAG, "⚠️ 注销后仍能拿到 dashboard (account=${verifyDashboard.account})，服务端会话未断")
-            } else {
-                Log.i(TAG, "✅ 注销验证通过，首页已无 account")
+                cookieJar.clear()
+                return@withContext Result.failure(
+                    LogoutException(
+                        "已发送注销请求但服务端会话未断开。\n" +
+                        "API HTTP $apiCode, result=${apiBody.take(80)}\n" +
+                        "本机 IP=$ip\n" +
+                        "建议：手动断开 WiFi 后重连，或在浏览器访问 http://$HOST/ 手动注销。"
+                    )
+                )
             }
 
+            Log.i(TAG, "✅ 注销验证通过，首页已无 account (apiOk=$apiOk)")
             cookieJar.clear()
             Result.success(Unit)
         } catch (e: Exception) {
@@ -318,6 +358,8 @@ class CampusNetworkClient {
 }
 
 class LoginException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
+
+class LogoutException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
 
 private class InMemoryCookieJar : CookieJar {
     private val store = ConcurrentHashMap<String, MutableList<Cookie>>()
