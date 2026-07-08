@@ -22,7 +22,7 @@ data class LoginUiState(
 )
 
 class LoginViewModel(
-    private val client: CampusNetworkClient = CampusNetworkClient(),
+    private val client: CampusNetworkClient,
     private val credentialStore: CredentialStore? = null
 ) : ViewModel() {
 

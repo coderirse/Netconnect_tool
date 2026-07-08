@@ -33,6 +33,9 @@ class CampusNetworkClient {
                 Log.i(TAG, "=== ePortal 4.x 登录流程开始 ===")
                 Log.i(TAG, "账号: $account, 运营商: ${carrier.displayName}")
 
+                // 清理旧 cookie，确保干净的登录会话
+                cookieJar.clear()
+
                 // 第 1 步：访问首页，检测是否已登录
                 val home = fetchPage("http://$HOST/")
                 Log.i(TAG, "首页: code=${home.httpCode}, len=${home.html.length}, finalUrl=${home.finalUrl}")
@@ -83,11 +86,26 @@ class CampusNetworkClient {
                     wlanUserIp = extractIpFromUrl(redirect.finalUrl)
                 }
 
+                // 1d. 最后试 qq.com
+                if (wlanUserIp == null) {
+                    val redirect = fetchPage("http://www.qq.com/")
+                    Log.i(TAG, "qq: code=${redirect.httpCode}, finalUrl=${redirect.finalUrl}")
+                    wlanUserIp = extractIpFromUrl(redirect.finalUrl)
+                }
+
                 Log.i(TAG, "最终获取的 wlan_user_ip: $wlanUserIp")
 
                 // 第 3 步：尝试 ePortal 4.x 登录
-                // 不同部署用 0-based 或 1-based carrier id，两种都试
-                val candidateAccounts = listOf("0,$account", "1,$account")
+                // 不同部署用不同格式：0-based / 1-based carrier id，或者账号后缀
+                val candidateAccounts = buildList {
+                    add("0,$account")
+                    add("1,$account")
+                    when (carrier) {
+                        Carrier.DIANXIN -> add("${account}@dx")
+                        Carrier.LIANTONG -> add("${account}@lt")
+                        Carrier.DEFAULT -> {} // 校园用户只试数字前缀
+                    }
+                }
 
                 var lastErrorMsg: String? = null
                 var lastResponseSnippet: String = ""
@@ -348,15 +366,19 @@ class CampusNetworkClient {
                 apiOk = true
             }
 
-            // 验证是否真的注销了：再拉一次首页，如果还能拿到 account 说明服务端没踢
-            val verifyPage = fetchPage("http://$HOST/")
-            val verifyDashboard = parser.parse(verifyPage.html)
-            if (verifyDashboard.account.isNotBlank()) {
-                Log.w(TAG, "⚠️ 注销后仍能拿到 dashboard (account=${verifyDashboard.account})，服务端会话未断")
+            // 验证是否真的断了网：尝试访问外部 HTTP 站点
+            // 如果仍能访问外网（未被重定向到 portal），说明服务端没踢会话
+            Thread.sleep(1000) // 给服务端一点时间处理
+            val verifyPage = fetchPage("http://www.baidu.com/")
+            val stillOnline = !verifyPage.finalUrl.contains(HOST)
+            Log.i(TAG, "注销验证: finalUrl=${verifyPage.finalUrl}, stillOnline=$stillOnline")
+
+            if (stillOnline) {
+                Log.w(TAG, "⚠️ 注销后仍能访问外网，服务端会话未断")
                 cookieJar.clear()
                 return@withContext Result.failure(
                     LogoutException(
-                        "已发送注销请求但服务端会话未断开。\n" +
+                        "已发送注销请求但网络会话未断开（仍能访问外网）。\n" +
                         "API HTTP $apiCode, result=${apiBody.take(80)}\n" +
                         "本机 IP=$ip\n" +
                         "建议：手动断开 WiFi 后重连，或在浏览器访问 http://$HOST/ 手动注销。"
@@ -364,7 +386,7 @@ class CampusNetworkClient {
                 )
             }
 
-            Log.i(TAG, "✅ 注销验证通过，首页已无 account (apiOk=$apiOk)")
+            Log.i(TAG, "✅ 注销验证通过，外网访问已被重定向到 portal (apiOk=$apiOk)")
             cookieJar.clear()
             Result.success(Unit)
         } catch (e: Exception) {

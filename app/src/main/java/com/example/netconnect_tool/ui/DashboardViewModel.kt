@@ -28,7 +28,7 @@ sealed interface UpdateState {
 }
 
 class DashboardViewModel(
-    private val client: CampusNetworkClient = CampusNetworkClient(),
+    private val client: CampusNetworkClient,
     private val credentialStore: CredentialStore? = null,
     private val updateChecker: UpdateChecker = UpdateChecker(),
     private val currentVersion: String = "1.0"

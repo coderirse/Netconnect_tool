@@ -9,6 +9,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.example.netconnect_tool.data.CampusNetworkClient
 import com.example.netconnect_tool.data.CredentialStore
 import com.example.netconnect_tool.ui.DashboardScreen
 import com.example.netconnect_tool.ui.DashboardViewModel
@@ -21,23 +22,32 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val client = CampusNetworkClient()
         val credentialStore = CredentialStore(this)
         val versionName = currentVersionName(this)
         setContent {
             Netconnect_toolTheme {
-                AppNavigation(credentialStore = credentialStore, currentVersion = versionName)
+                AppNavigation(
+                    client = client,
+                    credentialStore = credentialStore,
+                    currentVersion = versionName
+                )
             }
         }
     }
 }
 
 @Composable
-private fun AppNavigation(credentialStore: CredentialStore, currentVersion: String) {
+private fun AppNavigation(
+    client: CampusNetworkClient,
+    credentialStore: CredentialStore,
+    currentVersion: String
+) {
     val navController = rememberNavController()
     NavHost(navController = navController, startDestination = "dashboard") {
         composable("login") {
             val viewModel: LoginViewModel = viewModel {
-                LoginViewModel(credentialStore = credentialStore)
+                LoginViewModel(client = client, credentialStore = credentialStore)
             }
             LoginScreen(
                 viewModel = viewModel,
@@ -50,7 +60,11 @@ private fun AppNavigation(credentialStore: CredentialStore, currentVersion: Stri
         }
         composable("dashboard") {
             val viewModel: DashboardViewModel = viewModel {
-                DashboardViewModel(credentialStore = credentialStore, currentVersion = currentVersion)
+                DashboardViewModel(
+                    client = client,
+                    credentialStore = credentialStore,
+                    currentVersion = currentVersion
+                )
             }
             DashboardScreen(
                 viewModel = viewModel,
