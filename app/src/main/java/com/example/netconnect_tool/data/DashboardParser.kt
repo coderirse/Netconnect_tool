@@ -12,20 +12,25 @@ class DashboardParser {
         val doc = Jsoup.parse(html)
         doc.select("font.notranslate, .immersive-translate-target-wrapper").remove()
 
-        // V6 诊断：在解析前 dump HTML 中 V6 相关片段
-        val diagIdx = html.indexOf("useflowV6", ignoreCase = true)
-        if (diagIdx >= 0) {
-            val diag = html.substring((diagIdx - 100).coerceAtLeast(0), (diagIdx + 350).coerceAtMost(html.length))
-            Log.i(TAG, "=== V6 HTML 诊断 (useflowV6 附近) ===\n$diag\n=== 诊断结束 ===")
-        } else {
-            Log.i(TAG, "=== V6 HTML 诊断: 未找到 useflowV6，dump 前 600 字符 ===\n${html.take(600)}\n=== 诊断结束 ===")
+        // V6 诊断：提取 HTML 中所有 JS 变量赋值（name=数字 或 name='值'）
+        val allJsVars = Regex("""(\w+)\s*=\s*(\d+|'[^']*');""").findAll(html).toList()
+        Log.i(TAG, "=== 全部 JS 变量 (共 ${allJsVars.size} 个) ===")
+        allJsVars.forEach { m ->
+            val name = m.groupValues[1]
+            val value = m.groupValues[2]
+            Log.i(TAG, "  $name=$value")
         }
-        // 也 dump V6 JS 变量区域
-        val jsV6Idx = html.indexOf("v6af")
-        if (jsV6Idx >= 0) {
-            val jsDiag = html.substring((jsV6Idx - 50).coerceAtLeast(0), (jsV6Idx + 150).coerceAtMost(html.length))
-            Log.i(TAG, "=== V6 JS 诊断 (v6af 附近) ===\n$jsDiag\n=== JS 诊断结束 ===")
+        Log.i(TAG, "=== JS 变量列表结束 ===")
+
+        // 找出 HTML 中所有带 MB/GB 单位的数值（可能是流量显示）
+        val allTrafficValues = Regex("""(\d+\.?\d*)\s*(MB|GB|KB)""").findAll(html).toList()
+        Log.i(TAG, "=== HTML 中所有流量数值 (共 ${allTrafficValues.size} 个) ===")
+        allTrafficValues.forEach { m ->
+            val ctx = html.substring((m.range.first - 30).coerceAtLeast(0), (m.range.last + 30).coerceAtMost(html.length))
+                .replace('\n', ' ').replace('\r', ' ')
+            Log.i(TAG, "  ${m.value}  上下文: ...$ctx...")
         }
+        Log.i(TAG, "=== 流量数值列表结束 ===")
 
         val account = extractAccount(html, doc)
         val balance = extractBalance(html, doc)
