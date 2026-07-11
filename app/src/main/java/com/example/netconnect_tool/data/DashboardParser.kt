@@ -168,22 +168,34 @@ class DashboardParser {
             Log.i(TAG, "V6[3] HTML 中未找到 '流量(V6)' 标签")
         }
 
-        // 4. JS 变量 v6af（V6 流量，单位 KB）
+        // 4. JS 变量：v6df（IPv6 下行）和 v6af（IPv6 合计）
+        //    实测 USTB 部署：v6df/v6af 每 tick=256 字节（除以 4 才是 KB）
+        //    优先级：v6df/4 → v6af/4 → v6df 直读 → v6af 直读（向后兼容旧部署）
+        val v6dfRaw = extractJsVariable(html, "v6df")
         val v6afRaw = extractJsVariable(html, "v6af")
-        Log.i(TAG, "V6[4] JS v6af 原始值: '$v6afRaw'")
-        if (v6afRaw != null) {
-            v6afRaw.trim().toLongOrNull()?.let { v6 ->
-                Log.i(TAG, "V6 ✅ [4] v6af=$v6 KB → ${formatTraffic(v6)}")
-                return TrafficInfo(formatTraffic(v6), v6)
-            }
-            if (v6afRaw.trim().toLongOrNull() == null) {
-                Log.w(TAG, "V6[4] v6af='$v6afRaw' 无法转为 Long，尝试按浮点 KB")
-                v6afRaw.trim().toDoubleOrNull()?.let { v6d ->
-                    val kb = v6d.toLong()
-                    Log.i(TAG, "V6 ✅ [4] v6af=$v6afRaw (double→${kb}KB) → ${formatTraffic(kb)}")
-                    return TrafficInfo(formatTraffic(kb), kb)
-                }
-            }
+        Log.i(TAG, "V6[4] JS v6df='$v6dfRaw' v6af='$v6afRaw'")
+
+        // 4a. v6df / 4 → KB（IPv6 下行，匹配网站显示）
+        v6dfRaw?.trim()?.toLongOrNull()?.let { raw ->
+            val kb = raw / 4L
+            Log.i(TAG, "V6 ✅ [4a] v6df=$raw /4 → ${kb}KB → ${formatTraffic(kb)}")
+            return TrafficInfo(formatTraffic(kb), kb)
+        }
+        // 4b. v6af / 4 → KB（IPv6 总流量，v6df 不可用时回退）
+        v6afRaw?.trim()?.toLongOrNull()?.let { raw ->
+            val kb = raw / 4L
+            Log.i(TAG, "V6 ✅ [4b] v6af=$raw /4 → ${kb}KB → ${formatTraffic(kb)}")
+            return TrafficInfo(formatTraffic(kb), kb)
+        }
+        // 4c. v6df 按 KB 直读（向后兼容其他部署）
+        v6dfRaw?.trim()?.toLongOrNull()?.let { v6 ->
+            Log.i(TAG, "V6 ✅ [4c-legacy] v6df=$v6 KB → ${formatTraffic(v6)}")
+            return TrafficInfo(formatTraffic(v6), v6)
+        }
+        // 4d. v6af 按 KB 直读（向后兼容）
+        v6afRaw?.trim()?.toLongOrNull()?.let { v6 ->
+            Log.i(TAG, "V6 ✅ [4d-legacy] v6af=$v6 KB → ${formatTraffic(v6)}")
+            return TrafficInfo(formatTraffic(v6), v6)
         }
 
         // 5. 其他 JS 变量名
