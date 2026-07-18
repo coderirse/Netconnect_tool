@@ -31,24 +31,29 @@
 | --- | --- |
 | UI | Jetpack Compose + Material 3 |
 | 架构 | 单 Activity + ViewModel + Navigation Compose |
-| 网络 | OkHttp 4.12 + 自定义 CookieJar |
-| HTML 解析 | Jsoup 1.18 + 正则兜底 |
-| 凭据存储 | androidx.security.crypto |
+| 网络 | OkHttp 4.12 + 自定义 CookieJar（共享实例） |
+| HTML 解析 | Jsoup 1.18 + 正则兜底 + JS 变量提取 |
+| 凭据存储 | androidx.security.crypto（EncryptedSharedPreferences） |
 | 异步 | Kotlin Coroutines + Flow |
+| 更新检查 | GitHub Releases API |
 | 最低 SDK | 24 (Android 7.0) |
+| 目标 SDK | 35 (Android 15) |
 
 ## 项目结构
 
 ```
 app/src/main/java/com/example/netconnect_tool/
-├── MainActivity.kt                  # NavHost 入口
+├── MainActivity.kt                  # NavHost 入口 + 共享 CampusNetworkClient
 ├── data/
-│   ├── CampusNetworkClient.kt       # OkHttp 客户端：登录/注销/dashboard
-│   ├── DashboardParser.kt           # HTML → Dashboard 数据模型
+│   ├── CampusNetworkClient.kt       # OkHttp：登录/注销/dashboard/重试
+│   ├── DashboardParser.kt           # HTML + JS 变量 → Dashboard（6 级 V6 回退）
 │   ├── CredentialStore.kt           # 加密凭据存储
+│   ├── CachedDashboard.kt           # 内存缓存（AtomicReference）
+│   ├── UpdateChecker.kt             # GitHub Releases 更新检查
 │   └── model/
 │       ├── Dashboard.kt
-│       └── Carrier.kt
+│       ├── Carrier.kt
+│       └── BulletinItem.kt
 └── ui/
     ├── LoginScreen.kt + LoginViewModel.kt
     └── DashboardScreen.kt + DashboardViewModel.kt
@@ -72,21 +77,24 @@ app/src/main/java/com/example/netconnect_tool/
 4. 解析 JSONP 响应中的 `result` 和 `msg`
 5. 成功后再次拉取首页，解析出 Dashboard
 
-不同部署可能使用 0-based 或 1-based 的运营商 ID，所以代码会依次尝试 `0,account` 和 `1,account` 两种格式。
+不同部署可能使用 0-based 或 1-based 的运营商 ID，还会根据运营商额外尝试 `account@dx` / `account@lt` suffix 格式。
 
 ### Dashboard 解析
 
-页面中的关键字段来自三类来源，每类都有多级回退保证健壮性：
-
-- **HTML 元素**：`#user_account`、`#user_usetime`、`#user_useflow`、`#user_useflowV6`
-- **JS 变量**：`uid`、`fee`、`flow`、`v6af`、`time`、`stime`、`v4ip`、`v6ip`
+页面关键字段来自三类来源：
+- **HTML 元素**：`#user_account`、`#user_usetime`、`#user_useflow`
+- **JS 变量**：`uid`、`fee`、`flow`、`v6df`、`v6af`、`time`、`stime`、`v4ip`、`v6ip`
 - **页面标签文本**：例如 "流量(V6)" 标签后紧跟的数值
+
+实测 USTB 部署中 IPv6 流量计数器 `v6df` / `v6af` 单位为 256 字节/tick（除以 4 = KB），与 IPv4 的 `flow`（直读 KB）不同，解析时已自动区分。
 
 ### 注销
 
 ```
 GET http://202.204.48.66:801/eportal/portal/logout?callback=dr1004&...
 ```
+
+注销后通过外网连通性测试验证：访问外部站点，若未被重定向到 portal 则判定注销失败。
 
 ## 构建
 
@@ -114,9 +122,9 @@ gradlew.bat assembleDebug
 ## 已知限制
 
 - 仅在 `202.204.48.66` 这一个 ePortal 部署上验证过，其他学校需要修改 `CampusNetworkClient.HOST`
-- 余额单位（元 / 分）依赖 JS 变量 `fee` 的具体含义，不同部署可能需要调整
-- 校园网系统不允许完全精确的流量对账（网页显示与 API 数据本身就有几百 MB 偏差），App 显示的是 JS 变量直接换算的结果
-- 没有后台保活 / 自动重连（校园网允许手机电脑同时在线，日常不需要）
+- IPv6 流量计数器的单位因部署而异（USTB 实测 ÷4 = KB，其他学校可能是直读 KB），`DashboardParser` 已按优先级兼容
+- 余额单位（元 / 分）依赖 JS 变量 `fee` 的具体含义
+- 没有后台保活 / 自动重连
 
 ## 隐私说明
 
