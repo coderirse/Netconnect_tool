@@ -326,7 +326,7 @@ private fun DashboardContent(
                 color = MaterialTheme.colorScheme.outlineVariant
             )
             Text(
-                text = "© 2026 Net-USTB",
+                text = "© 2026 caeamer. All rights reserved.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.outline,
                 textAlign = TextAlign.Center,
