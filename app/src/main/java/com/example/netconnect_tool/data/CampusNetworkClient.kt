@@ -39,7 +39,6 @@ class CampusNetworkClient {
                 // 第 1 步：访问首页，检测是否已登录
                 val home = fetchPage("http://$HOST/")
                 Log.i(TAG, "首页: code=${home.httpCode}, len=${home.html.length}, finalUrl=${home.finalUrl}")
-                Log.i(TAG, "首页 HTML 前 800 字符:\n${home.html.take(800)}")
 
                 // 如果已经登录（页面是注销页/dashboard），直接返回
                 val preDashboard = parser.parse(home.html)
@@ -134,7 +133,7 @@ class CampusNetworkClient {
                         apiCode = r.first
                         loginResponse = r.second
                         lastHttpCode = apiCode
-                        Log.i(TAG, "登录 API: HTTP $apiCode, body长度=${loginResponse.length}, 前500字符=${loginResponse.take(500)}")
+                        Log.i(TAG, "登录 API: HTTP $apiCode, body长度=${loginResponse.length}, 前200字符=${loginResponse.take(200)}")
                     } catch (e: Exception) {
                         Log.e(TAG, "登录 API 请求异常", e)
                         lastErrorMsg = "登录 API 请求失败: ${e.message}"

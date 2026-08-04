@@ -13,31 +13,48 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Login
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.Campaign
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -60,7 +77,9 @@ fun DashboardScreen(
     val needLogin by viewModel.needLogin.collectAsStateWithLifecycle()
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     val logoutError by viewModel.logoutError.collectAsStateWithLifecycle()
+    val refreshError by viewModel.refreshError.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(loggedOut) {
         if (loggedOut) {
@@ -73,6 +92,14 @@ fun DashboardScreen(
         if (needLogin) {
             viewModel.consumeNeedLoginEvent()
             onNeedLogin()
+        }
+    }
+
+    // 非首次刷新失败：保留已有数据，仅 Snackbar 提示
+    LaunchedEffect(refreshError) {
+        refreshError?.let {
+            snackbarHostState.showSnackbar("刷新失败：$it")
+            viewModel.consumeRefreshError()
         }
     }
 
@@ -96,7 +123,8 @@ fun DashboardScreen(
                     }
                 }
             )
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         Box(
             modifier = Modifier
@@ -200,13 +228,9 @@ private fun DashboardContent(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // 顶部账号卡片
+        // 主卡片：剩余免费流量 + 进度
         item {
-            StatCard(
-                title = "认证账号",
-                value = dashboard.account.ifBlank { "—" },
-                fullWidth = true
-            )
+            TrafficHeroCard(dashboard)
         }
 
         // 余额 + 时长
@@ -218,11 +242,13 @@ private fun DashboardContent(
                 StatCard(
                     title = "当前余额",
                     value = dashboard.balance.ifBlank { "—" },
+                    icon = Icons.Filled.AccountBalanceWallet,
                     modifier = Modifier.weight(1f)
                 )
                 StatCard(
                     title = "已用时长",
                     value = dashboard.usedTimeDisplay.ifBlank { "—" },
+                    icon = Icons.Filled.Schedule,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -237,26 +263,19 @@ private fun DashboardContent(
                 StatCard(
                     title = "IPv4 流量",
                     value = dashboard.usedTrafficV4.ifBlank { "—" },
+                    icon = Icons.Filled.Download,
                     modifier = Modifier.weight(1f)
                 )
                 StatCard(
                     title = "IPv6 流量",
                     value = dashboard.usedTrafficV6.ifBlank { "—" },
+                    icon = Icons.Filled.Public,
                     modifier = Modifier.weight(1f)
                 )
             }
         }
 
-        // 剩余免费流量（每月 120 GB - V4 - V6）
-        item {
-            StatCard(
-                title = "剩余免费流量（${Dashboard.MONTHLY_FREE_GB} GB）",
-                value = dashboard.remainingFreeTraffic,
-                fullWidth = true
-            )
-        }
-
-        // IP + 登录时间信息
+        // 连接信息
         item {
             InfoCard(
                 loginTime = dashboard.loginTime,
@@ -271,8 +290,15 @@ private fun DashboardContent(
                 onClick = onLogout,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
+                    .height(52.dp),
+                shape = RoundedCornerShape(26.dp)
             ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.Logout,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
                 Text("注销登录")
             }
         }
@@ -283,20 +309,34 @@ private fun DashboardContent(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                OutlinedButton(
+                FilledTonalButton(
                     onClick = onOpenRepo,
                     modifier = Modifier
                         .weight(1f)
-                        .height(48.dp)
+                        .height(52.dp),
+                    shape = RoundedCornerShape(26.dp)
                 ) {
+                    Icon(
+                        Icons.Filled.Code,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
                     Text("GitHub 仓库")
                 }
-                OutlinedButton(
+                FilledTonalButton(
                     onClick = onCheckUpdate,
                     modifier = Modifier
                         .weight(1f)
-                        .height(48.dp)
+                        .height(52.dp),
+                    shape = RoundedCornerShape(26.dp)
                 ) {
+                    Icon(
+                        Icons.Filled.SystemUpdate,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
                     Text("检查更新")
                 }
             }
@@ -306,12 +346,23 @@ private fun DashboardContent(
         if (dashboard.bulletin.isNotEmpty()) {
             item {
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "校园看板",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.padding(horizontal = 4.dp)
-                )
+                ) {
+                    Icon(
+                        Icons.Filled.Campaign,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "校园看板",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
             items(dashboard.bulletin) { item ->
                 BulletinCard(item)
@@ -338,23 +389,79 @@ private fun DashboardContent(
     }
 }
 
+/** 主卡片：剩余免费流量大字 + 本月用量进度条 */
+@Composable
+private fun TrafficHeroCard(dashboard: Dashboard) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.Wifi,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = dashboard.account.ifBlank { "已连接" },
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            Text(
+                text = "剩余免费流量（每月 ${Dashboard.MONTHLY_FREE_GB} GB）",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = dashboard.remainingFreeTraffic,
+                style = MaterialTheme.typography.displaySmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+
+            Spacer(Modifier.height(16.dp))
+
+            LinearProgressIndicator(
+                progress = { dashboard.usedFreeTrafficFraction },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "本月已用 ${dashboard.usedQuotaTraffic} / ${Dashboard.MONTHLY_FREE_GB} GB（IPv6 不计入）",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+            )
+        }
+    }
+}
+
 @Composable
 private fun StatCard(
     title: String,
     value: String,
-    modifier: Modifier = Modifier,
-    fullWidth: Boolean = false
+    icon: ImageVector,
+    modifier: Modifier = Modifier
 ) {
-    val cardModifier = if (fullWidth) {
-        Modifier.fillMaxWidth()
-    } else {
-        modifier
-    }
     Card(
-        modifier = cardModifier,
-        shape = RoundedCornerShape(12.dp),
+        modifier = modifier,
+        shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
         )
     ) {
         Column(
@@ -362,12 +469,19 @@ private fun StatCard(
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.height(8.dp))
             Text(
                 text = title,
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(2.dp))
             Text(
                 text = value,
                 style = MaterialTheme.typography.titleMedium,
@@ -381,38 +495,49 @@ private fun StatCard(
 private fun InfoCard(loginTime: String, ipv4: String, ipv6: String) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp)
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+        )
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             if (loginTime.isNotBlank()) {
-                InfoRow(label = "登录时间", value = loginTime)
+                InfoRow(icon = Icons.AutoMirrored.Filled.Login, label = "登录时间", value = loginTime)
             }
             if (ipv4.isNotBlank()) {
-                InfoRow(label = "IPv4", value = ipv4)
+                InfoRow(icon = Icons.Filled.Wifi, label = "IPv4", value = ipv4)
             }
             if (ipv6.isNotBlank()) {
-                InfoRow(label = "IPv6", value = ipv6)
+                InfoRow(icon = Icons.Filled.Public, label = "IPv6", value = ipv6)
             }
         }
     }
 }
 
 @Composable
-private fun InfoRow(label: String, value: String) {
+private fun InfoRow(icon: ImageVector, label: String, value: String) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween
+        verticalAlignment = Alignment.CenterVertically
     ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(Modifier.width(8.dp))
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        Spacer(Modifier.weight(1f))
         Text(
             text = value,
             style = MaterialTheme.typography.bodyMedium
@@ -424,12 +549,15 @@ private fun InfoRow(label: String, value: String) {
 private fun BulletinCard(item: BulletinItem) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp)
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        )
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Text(
@@ -437,16 +565,11 @@ private fun BulletinCard(item: BulletinItem) {
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Medium
             )
-            if (item.date.isNotBlank()) {
+            if (item.date.isNotBlank() || item.location.isNotBlank()) {
                 Text(
-                    text = item.date,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline
-                )
-            }
-            if (item.location.isNotBlank()) {
-                Text(
-                    text = item.location,
+                    text = listOf(item.date, item.location)
+                        .filter { it.isNotBlank() }
+                        .joinToString(" · "),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.outline
                 )

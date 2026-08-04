@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+   网络安全配置：默认禁止明文 HTTP，仅对校园网认证流程必需的目标放开。
+   - 202.204.48.66: ePortal 认证服务器（HTTP）
+   - 1.1.1.1 / www.baidu.com / www.qq.com: 未认证时触发网关重定向、提取本机内网 IP 用（HTTP）
+   其余域名（如 api.github.com）均走 HTTPS。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">202.204.48.66</domain>
+        <domain includeSubdomains="false">1.1.1.1</domain>
+        <domain includeSubdomains="true">baidu.com</domain>
+        <domain includeSubdomains="true">qq.com</domain>
+    </domain-config>
+</network-security-config>

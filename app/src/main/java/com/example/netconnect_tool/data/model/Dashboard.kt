@@ -20,22 +20,31 @@ data class Dashboard(
             return if (hours > 0) "${hours} 小时 ${mins} 分钟" else "${mins} 分钟"
         }
 
-    /** 每月免费 120 GB - 已用 V4 - 已用 V6 */
+    /** 每月免费 120 GB - 已用 V4（IPv6 不计入配额） */
     val remainingFreeTraffic: String
         get() {
-            val freeKb = MONTHLY_FREE_GB * 1024L * 1024L
-            val usedKb = usedTrafficV4Kb + usedTrafficV6Kb
-            val remaining = freeKb - usedKb
+            val remaining = MONTHLY_FREE_KB - usedTrafficV4Kb
             if (remaining <= 0L) return "0 GB"
-            return when {
-                remaining >= 1024 * 1024 -> String.format("%.2f GB", remaining / (1024.0 * 1024.0))
-                remaining >= 1024 -> String.format("%.2f MB", remaining / 1024.0)
-                else -> "$remaining KB"
-            }
+            return formatKb(remaining)
         }
+
+    /** 计入配额的已用流量（仅 V4，格式化） */
+    val usedQuotaTraffic: String
+        get() = formatKb(usedTrafficV4Kb)
+
+    /** 已用免费流量比例（0f~1f），供进度条使用；IPv6 不计入配额 */
+    val usedFreeTrafficFraction: Float
+        get() = (usedTrafficV4Kb / MONTHLY_FREE_KB.toFloat()).coerceIn(0f, 1f)
 
     companion object {
         const val MONTHLY_FREE_GB = 120
+        private const val MONTHLY_FREE_KB = MONTHLY_FREE_GB * 1024L * 1024L
+
+        private fun formatKb(kb: Long): String = when {
+            kb >= 1024 * 1024 -> String.format("%.2f GB", kb / (1024.0 * 1024.0))
+            kb >= 1024 -> String.format("%.2f MB", kb / 1024.0)
+            else -> "$kb KB"
+        }
     }
 }
 

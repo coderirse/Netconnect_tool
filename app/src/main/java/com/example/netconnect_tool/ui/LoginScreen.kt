@@ -1,19 +1,29 @@
 package com.example.netconnect_tool.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -23,10 +33,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -38,6 +44,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.netconnect_tool.data.CampusNetworkClient
 import com.example.netconnect_tool.data.model.Carrier
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -52,89 +59,119 @@ fun LoginScreen(
         if (uiState.loginSuccess) onLoginSuccess()
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(title = { Text("校园网登录") })
-        }
-    ) { padding ->
+    Scaffold { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // 头部：图标 + 标题
+            Box(
+                modifier = Modifier
+                    .size(72.dp)
+                    .background(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shape = CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Filled.Wifi,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(36.dp)
+                )
+            }
             Text(
                 text = "USTB 校园网",
                 style = MaterialTheme.typography.headlineMedium
             )
             Text(
-                text = "202.204.48.66",
+                text = CampusNetworkClient.HOST,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.outline
             )
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(8.dp))
 
-            OutlinedTextField(
-                value = uiState.account,
-                onValueChange = viewModel::onAccountChange,
-                label = { Text("账号") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Ascii,
-                    imeAction = ImeAction.Next
-                ),
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            OutlinedTextField(
-                value = uiState.password,
-                onValueChange = viewModel::onPasswordChange,
-                label = { Text("密码") },
-                singleLine = true,
-                visualTransformation = if (uiState.passwordVisible) {
-                    VisualTransformation.None
-                } else {
-                    PasswordVisualTransformation()
-                },
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Password,
-                    imeAction = ImeAction.Done
-                ),
-                trailingIcon = {
-                    IconButton(onClick = viewModel::togglePasswordVisible) {
-                        Icon(
-                            imageVector = if (uiState.passwordVisible) {
-                                Icons.Filled.Visibility
-                            } else {
-                                Icons.Filled.VisibilityOff
-                            },
-                            contentDescription = if (uiState.passwordVisible) "隐藏密码" else "显示密码"
-                        )
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Column(
+            // 表单卡片
+            Card(
                 modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = "运营商",
-                    style = MaterialTheme.typography.labelLarge
+                shape = RoundedCornerShape(28.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
                 )
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    Carrier.entries.forEach { carrier ->
-                        FilterChip(
-                            selected = uiState.carrier == carrier,
-                            onClick = { viewModel.onCarrierChange(carrier) },
-                            label = { Text(carrier.displayName) }
+                    OutlinedTextField(
+                        value = uiState.account,
+                        onValueChange = viewModel::onAccountChange,
+                        label = { Text("账号") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Ascii,
+                            imeAction = ImeAction.Next
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = uiState.password,
+                        onValueChange = viewModel::onPasswordChange,
+                        label = { Text("密码") },
+                        singleLine = true,
+                        visualTransformation = if (uiState.passwordVisible) {
+                            VisualTransformation.None
+                        } else {
+                            PasswordVisualTransformation()
+                        },
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Password,
+                            imeAction = ImeAction.Done
+                        ),
+                        trailingIcon = {
+                            IconButton(onClick = viewModel::togglePasswordVisible) {
+                                Icon(
+                                    imageVector = if (uiState.passwordVisible) {
+                                        Icons.Filled.Visibility
+                                    } else {
+                                        Icons.Filled.VisibilityOff
+                                    },
+                                    contentDescription = if (uiState.passwordVisible) "隐藏密码" else "显示密码"
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "运营商",
+                            style = MaterialTheme.typography.labelLarge
                         )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Carrier.entries.forEach { carrier ->
+                                FilterChip(
+                                    selected = uiState.carrier == carrier,
+                                    onClick = { viewModel.onCarrierChange(carrier) },
+                                    label = { Text(carrier.displayName) }
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -151,14 +188,13 @@ fun LoginScreen(
                 )
             }
 
-            Spacer(Modifier.height(8.dp))
-
             Button(
                 onClick = viewModel::login,
                 enabled = !uiState.isLoading,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(50.dp)
+                    .height(56.dp),
+                shape = RoundedCornerShape(28.dp)
             ) {
                 if (uiState.isLoading) {
                     CircularProgressIndicator(

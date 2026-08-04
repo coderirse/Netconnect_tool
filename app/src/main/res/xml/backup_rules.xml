@@ -1,13 +1,9 @@
-<?xml version="1.0" encoding="utf-8"?><!--
-   Sample backup rules file; uncomment and customize as necessary.
-   See https://developer.android.com/guide/topics/data/autobackup
-   for details.
-   Note: This file is ignored for devices older than API 31
-   See https://developer.android.com/about/versions/12/backup-restore
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+   备份规则：加密凭据（EncryptedSharedPreferences）的密钥保存在本机 AndroidKeystore，
+   不随备份迁移；恢复到新设备后无法解密，必须排除，避免恢复到一堆解不开的数据。
 -->
 <full-backup-content>
-    <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    <exclude domain="sharedpref" path="netconnect_credentials.xml" />
+    <exclude domain="sharedpref" path="netconnect_credentials_fallback.xml" />
 </full-backup-content>

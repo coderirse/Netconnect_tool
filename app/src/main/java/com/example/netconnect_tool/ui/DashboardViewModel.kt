@@ -4,13 +4,11 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.netconnect_tool.data.CampusNetworkClient
-import com.example.netconnect_tool.data.CredentialStore
 import com.example.netconnect_tool.data.UpdateChecker
 import com.example.netconnect_tool.data.model.Dashboard
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 sealed interface DashboardUiState {
@@ -29,7 +27,6 @@ sealed interface UpdateState {
 
 class DashboardViewModel(
     private val client: CampusNetworkClient,
-    private val credentialStore: CredentialStore? = null,
     private val updateChecker: UpdateChecker = UpdateChecker(),
     private val currentVersion: String = "1.0"
 ) : ViewModel() {
@@ -51,6 +48,10 @@ class DashboardViewModel(
 
     private val _logoutError = MutableStateFlow<String?>(null)
     val logoutError: StateFlow<String?> = _logoutError.asStateFlow()
+
+    /** 非首次刷新失败时的一次性提示（Snackbar），不清空已有数据 */
+    private val _refreshError = MutableStateFlow<String?>(null)
+    val refreshError: StateFlow<String?> = _refreshError.asStateFlow()
 
     private var lastKnownIp: String? = null
 
@@ -82,7 +83,8 @@ class DashboardViewModel(
                     } else if (wasInitial) {
                         _uiState.value = DashboardUiState.Error(msg)
                     } else {
-                        _uiState.update { DashboardUiState.Error(msg) }
+                        // 已有数据时保留界面，仅提示刷新失败
+                        _refreshError.value = msg
                     }
                 }
             _isRefreshing.value = false
@@ -120,13 +122,17 @@ class DashboardViewModel(
             _logoutError.value = null
             client.logout(knownIp = lastKnownIp)
                 .onSuccess {
-                    credentialStore?.clear()
+                    // 只清网络会话（client 内部已清 cookie），保留已存凭据方便下次登录
                     _loggedOut.value = true
                 }
                 .onFailure { e ->
                     _logoutError.value = e.message ?: "注销失败，请重试或手动断开 WiFi"
                 }
         }
+    }
+
+    fun consumeRefreshError() {
+        _refreshError.value = null
     }
 
     fun consumeLoggedOutEvent() {

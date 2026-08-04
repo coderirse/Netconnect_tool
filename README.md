@@ -46,15 +46,14 @@ app/src/main/java/com/example/netconnect_tool/
 ├── MainActivity.kt                  # NavHost 入口 + 共享 CampusNetworkClient
 ├── data/
 │   ├── CampusNetworkClient.kt       # OkHttp：登录/注销/dashboard/重试
-│   ├── DashboardParser.kt           # HTML + JS 变量 → Dashboard（6 级 V6 回退）
+│   ├── DashboardParser.kt           # HTML + JS 变量 → Dashboard（多级回退）
 │   ├── CredentialStore.kt           # 加密凭据存储
-│   ├── CachedDashboard.kt           # 内存缓存（AtomicReference）
 │   ├── UpdateChecker.kt             # GitHub Releases 更新检查
 │   └── model/
-│       ├── Dashboard.kt
-│       ├── Carrier.kt
-│       └── BulletinItem.kt
+│       ├── Dashboard.kt             # Dashboard + BulletinItem + 计算属性
+│       └── Carrier.kt
 └── ui/
+    ├── CachedDashboard.kt           # 内存缓存（AtomicReference）
     ├── LoginScreen.kt + LoginViewModel.kt
     └── DashboardScreen.kt + DashboardViewModel.kt
 ```

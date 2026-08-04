@@ -62,22 +62,18 @@ private fun AppNavigation(
             val viewModel: DashboardViewModel = viewModel {
                 DashboardViewModel(
                     client = client,
-                    credentialStore = credentialStore,
                     currentVersion = currentVersion
                 )
             }
+            val navigateToLogin: () -> Unit = {
+                navController.navigate("login") {
+                    popUpTo("dashboard") { inclusive = true }
+                }
+            }
             DashboardScreen(
                 viewModel = viewModel,
-                onLoggedOut = {
-                    navController.navigate("login") {
-                        popUpTo("dashboard") { inclusive = true }
-                    }
-                },
-                onNeedLogin = {
-                    navController.navigate("login") {
-                        popUpTo("dashboard") { inclusive = true }
-                    }
-                }
+                onLoggedOut = navigateToLogin,
+                onNeedLogin = navigateToLogin
             )
         }
     }
