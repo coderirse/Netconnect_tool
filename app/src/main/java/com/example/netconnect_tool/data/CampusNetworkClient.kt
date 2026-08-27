@@ -95,16 +95,21 @@ class CampusNetworkClient {
                 Log.i(TAG, "最终获取的 wlan_user_ip: $wlanUserIp")
 
                 // 第 3 步：尝试 ePortal 4.x 登录
-                // 不同部署用不同格式：0-based / 1-based carrier id，或者账号后缀
+                // 运营商 id 来自站点 carrier JSON（1-based）：
+                //   校园用户=1、电信=2、联通=3；电信/联通还可加后缀。
+                // 顺序：先试正确 id（1-based）→ 后缀格式 → 最后回退 0-based 兼容非标准部署。
                 val candidateAccounts = buildList {
-                    add("0,$account")
-                    add("1,$account")
-                    when (carrier) {
-                        Carrier.DIANXIN -> add("${account}@dx")
-                        Carrier.LIANTONG -> add("${account}@lt")
-                        Carrier.DEFAULT -> {} // 校园用户只试数字前缀
+                    // 1. 官方 1-based 前缀（校园用户=1、电信=2、联通=3）
+                    add("${carrier.portalId},$account")
+                    // 2. 运营商后缀格式（电信 @dx、联通 @lt）
+                    if (carrier.suffix.isNotEmpty()) {
+                        add("$account${carrier.suffix}")
                     }
+                    // 3. 回退 0-based，兼容部分非标准部署
+                    add("0,$account")
                 }
+                // 去重，避免重复尝试相同格式
+                .distinct()
 
                 var lastErrorMsg: String? = null
                 var lastResponseSnippet: String = ""

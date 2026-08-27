@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  桌面小部件：圆环仪表盘。
+  圆环(百分比+剩余GB+E/F刻度)全部由代码绘制成 Bitmap，通过 ImageView 展示。
+  点击区域覆盖整个小部件，点击打开 App。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="8dp">
+
+    <ImageView
+        android:id="@+id/widget_gauge"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="@string/widget_gauge_desc"
+        android:scaleType="fitCenter" />
+</FrameLayout>

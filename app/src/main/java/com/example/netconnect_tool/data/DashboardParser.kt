@@ -14,6 +14,7 @@ class DashboardParser {
 
         val account = extractAccount(html, doc)
         val balance = extractBalance(html, doc)
+        val balanceYuan = extractBalanceYuan(html)
         val trafficV4 = extractTrafficV4(html, doc)
         val trafficV6 = extractTrafficV6(html, doc)
 
@@ -21,6 +22,7 @@ class DashboardParser {
         val loginTime = extractJsVariable(html, "stime")?.trim().orEmpty()
         val ipv4 = extractJsVariable(html, "v4ip")?.trim().orEmpty()
         val ipv6 = extractJsVariable(html, "v6ip")?.trim().orEmpty()
+        val nickname = extractJsVariable(html, "NID")?.trim().orEmpty()
 
         val bulletin = doc.select("#wz .xykb_list").mapNotNull { element ->
             val dateText = element.select(".xykb_list_riqi span").text().trim()
@@ -45,7 +47,9 @@ class DashboardParser {
             loginTime = loginTime,
             ipv4 = ipv4,
             ipv6 = ipv6,
-            bulletin = bulletin
+            bulletin = bulletin,
+            balanceYuan = balanceYuan,
+            nickname = nickname
         )
     }
 
@@ -66,6 +70,19 @@ class DashboardParser {
             return String.format("%.2f 元", fee / 10000.0)
         }
         return ""
+    }
+
+    /** 余额数值（元）：优先 fee/10000.0，再尝试从显示字符串反解，均失败返回 0.0 */
+    private fun extractBalanceYuan(html: String): Double {
+        extractJsVariable(html, "fee")?.trim()?.toLongOrNull()?.let { fee ->
+            return fee / 10000.0
+        }
+        // 从页面余额文本反解，如 "17.93 元" / "17.93"
+        val labelMatch = Regex("""(\d+\.?\d*)\s*元""").find(html)
+        if (labelMatch != null) {
+            return labelMatch.groupValues[1].toDoubleOrNull() ?: 0.0
+        }
+        return 0.0
     }
 
     private fun extractTrafficV4(html: String, doc: Document): TrafficInfo {

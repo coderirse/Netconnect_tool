@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  桌面小部件信息。
+  updatePeriodMillis=0：关闭系统自动周期刷新，改由 WorkManager 采集时手动 updateAppWidget
+  （避免系统 30 分钟下限与 WorkManager 重复刷新、浪费电量）。
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="110dp"
+    android:minHeight="110dp"
+    android:targetCellWidth="2"
+    android:targetCellHeight="2"
+    android:maxResizeWidth="110dp"
+    android:maxResizeHeight="110dp"
+    android:updatePeriodMillis="0"
+    android:initialLayout="@layout/traffic_widget"
+    android:widgetCategory="home_screen"
+    android:resizeMode="horizontal|vertical"
+    android:description="@string/widget_gauge_desc" />
