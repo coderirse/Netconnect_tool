@@ -47,8 +47,8 @@ data class Dashboard(
         private const val MONTHLY_FREE_KB = MONTHLY_FREE_GB * 1024L * 1024L
 
         private fun formatKb(kb: Long): String = when {
-            kb >= 1024 * 1024 -> String.format("%.2f GB", kb / (1024.0 * 1024.0))
-            kb >= 1024 -> String.format("%.2f MB", kb / 1024.0)
+            kb >= 1024 * 1024 -> String.format(java.util.Locale.US, "%.2f GB", kb / (1024.0 * 1024.0))
+            kb >= 1024 -> String.format(java.util.Locale.US, "%.2f MB", kb / 1024.0)
             else -> "$kb KB"
         }
     }

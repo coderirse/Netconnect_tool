@@ -4,6 +4,8 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -46,7 +48,7 @@ import com.example.netconnect_tool.data.UpdateChecker
 import kotlinx.coroutines.launch
 
 /** 设置页：自动登录、余量提醒、档位阈值、检查更新、仓库入口、计费重置。 */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
@@ -160,7 +162,8 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(10.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // FlowRow：5 档阈值放不下一行时自动换行，避免最后一档被裁切出屏
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         THRESHOLD_OPTIONS_GB.forEach { gb ->
                             FilterChip(
                                 selected = thresholdGb == gb,

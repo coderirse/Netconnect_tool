@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        val client = CampusNetworkClient()
+        val client = CampusNetworkClient(applicationContext)
         val credentialStore = CredentialStore(this)
         val appSettings = AppSettings(this)
         val trafficHistoryStore = TrafficHistoryStore(this)

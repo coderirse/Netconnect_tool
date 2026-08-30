@@ -1,22 +1,29 @@
 package com.example.netconnect_tool.data
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import com.example.netconnect_tool.data.model.Carrier
 import com.example.netconnect_tool.data.model.Dashboard
 import okhttp3.Cookie
 import okhttp3.CookieJar
+import okhttp3.Dns
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.net.InetAddress
 import java.net.URLEncoder
 import java.nio.charset.Charset
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
-class CampusNetworkClient {
+class CampusNetworkClient(context: Context) {
 
+    private val appContext = context.applicationContext
     private val cookieJar = InMemoryCookieJar()
     private val parser = DashboardParser()
 
@@ -27,23 +34,52 @@ class CampusNetworkClient {
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
+    /**
+     * 绑定到 WiFi 网络的客户端：专用于"探测外网/是否被 portal 重定向"的请求。
+     * 手机同时开着移动数据时，默认网络探测会经蜂窝成功，导致登录 IP 采集与
+     * 注销验证全部误判（注销明明成功却报"会话未断"）。绑定 WiFi（DNS 也走该网络）
+     * 后，探测结果只反映校园网本身的状态。WiFi 不可用时退回默认客户端。
+     */
+    private val wifiBoundClient: OkHttpClient? by lazy {
+        try {
+            val cm = appContext.getSystemService(ConnectivityManager::class.java)
+                ?: return@lazy null
+            val network = cm.allNetworks.firstOrNull { net ->
+                val caps = cm.getNetworkCapabilities(net)
+                caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+            } ?: return@lazy null
+            client.newBuilder()
+                .socketFactory(network.socketFactory)
+                .dns(object : Dns {
+                    override fun lookup(hostname: String): List<InetAddress> =
+                        network.getAllByName(hostname).toList()
+                })
+                .build()
+        } catch (e: Exception) {
+            Log.w(TAG, "绑定 WiFi 网络失败，外网探测退回默认网络", e)
+            null
+        }
+    }
+
+    private fun probeClient(): OkHttpClient = wifiBoundClient ?: client
+
     suspend fun login(account: String, password: String, carrier: Carrier): Result<Dashboard> =
         withContext(Dispatchers.IO) {
             try {
                 Log.i(TAG, "=== ePortal 4.x 登录流程开始 ===")
-                Log.i(TAG, "账号: $account, 运营商: ${carrier.displayName}")
+                Log.i(TAG, "账号: ${maskAccount(account)}, 运营商: ${carrier.displayName}")
 
                 // 清理旧 cookie，确保干净的登录会话
                 cookieJar.clear()
 
                 // 第 1 步：访问首页，检测是否已登录
                 val home = fetchPage("http://$HOST/")
-                Log.i(TAG, "首页: code=${home.httpCode}, len=${home.html.length}, finalUrl=${home.finalUrl}")
+                Log.i(TAG, "首页: code=${home.httpCode}, len=${home.html.length}")
 
                 // 如果已经登录（页面是注销页/dashboard），直接返回
                 val preDashboard = parser.parse(home.html)
                 if (preDashboard.account.isNotBlank()) {
-                    Log.i(TAG, "✅ 检测到已登录状态（account=${preDashboard.account}），直接返回 dashboard")
+                    Log.i(TAG, "✅ 检测到已登录状态（account=${maskAccount(preDashboard.account)}），直接返回 dashboard")
                     return@withContext Result.success(preDashboard)
                 }
 
@@ -69,30 +105,30 @@ class CampusNetworkClient {
                 // 第 2 步：获取用户内网 IP
                 var wlanUserIp: String? = null
                 wlanUserIp = extractIpFromUrl(home.finalUrl) ?: extractIpFromHtml(home.html)
-                Log.i(TAG, "从首页获取 IP: $wlanUserIp")
+                Log.i(TAG, "从首页获取 IP: ${wlanUserIp != null}")
 
-                // 1b. 如果没拿到，访问外部站点触发网关重定向
+                // 1b. 如果没拿到，访问外部站点触发网关重定向（绑定 WiFi 探测，防蜂窝干扰）
                 if (wlanUserIp == null) {
-                    val redirect = fetchPage("http://1.1.1.1/")
-                    Log.i(TAG, "1.1.1.1: code=${redirect.httpCode}, finalUrl=${redirect.finalUrl}")
+                    val redirect = fetchPage("http://1.1.1.1/", probeClient())
+                    Log.d(TAG, "1.1.1.1: code=${redirect.httpCode}")
                     wlanUserIp = extractIpFromUrl(redirect.finalUrl)
                 }
 
                 // 1c. 还没有，再试 baidu
                 if (wlanUserIp == null) {
-                    val redirect = fetchPage("http://www.baidu.com/")
-                    Log.i(TAG, "baidu: code=${redirect.httpCode}, finalUrl=${redirect.finalUrl}")
+                    val redirect = fetchPage("http://www.baidu.com/", probeClient())
+                    Log.d(TAG, "baidu: code=${redirect.httpCode}")
                     wlanUserIp = extractIpFromUrl(redirect.finalUrl)
                 }
 
                 // 1d. 最后试 qq.com
                 if (wlanUserIp == null) {
-                    val redirect = fetchPage("http://www.qq.com/")
-                    Log.i(TAG, "qq: code=${redirect.httpCode}, finalUrl=${redirect.finalUrl}")
+                    val redirect = fetchPage("http://www.qq.com/", probeClient())
+                    Log.d(TAG, "qq: code=${redirect.httpCode}")
                     wlanUserIp = extractIpFromUrl(redirect.finalUrl)
                 }
 
-                Log.i(TAG, "最终获取的 wlan_user_ip: $wlanUserIp")
+                Log.i(TAG, "最终获取的 wlan_user_ip: ${wlanUserIp != null}")
 
                 // 第 3 步：尝试 ePortal 4.x 登录
                 // 运营商 id 来自站点 carrier JSON（1-based）：
@@ -129,7 +165,7 @@ class CampusNetworkClient {
                         append("wlan_ac_ip=&wlan_ac_name=&")
                         append("jsVersion=4.1&terminal_type=1&lang=zh&v=$ts")
                     }
-                    Log.i(TAG, "尝试 user_account=$userAccount")
+                    Log.i(TAG, "尝试 user_account 格式: ${maskAccount(userAccount)}")
 
                     val loginResponse: String
                     val apiCode: Int
@@ -138,7 +174,7 @@ class CampusNetworkClient {
                         apiCode = r.first
                         loginResponse = r.second
                         lastHttpCode = apiCode
-                        Log.i(TAG, "登录 API: HTTP $apiCode, body长度=${loginResponse.length}, 前200字符=${loginResponse.take(200)}")
+                        Log.d(TAG, "登录 API: HTTP $apiCode, body长度=${loginResponse.length}")
                     } catch (e: Exception) {
                         Log.e(TAG, "登录 API 请求异常", e)
                         lastErrorMsg = "登录 API 请求失败: ${e.message}"
@@ -168,13 +204,13 @@ class CampusNetworkClient {
                     // 匹配 JSONP：dr1003({...})，允许跨行
                     val jsonMatch = Regex("""dr1003\(\{[\s\S]*\}\)""").find(loginResponse)
                     if (jsonMatch == null) {
-                        Log.w(TAG, "JSONP 匹配失败，响应前 300 字符: ${loginResponse.take(300)}")
+                        Log.d(TAG, "JSONP 匹配失败，响应前 300 字符: ${loginResponse.take(300)}")
                         // 兜底 2：响应不是 JSONP（常见于空响应），可能是服务端认为已登录
                         // 再拉一次首页验证
                         val retryPage = fetchPage("http://$HOST/")
                         val retryDashboard = parser.parse(retryPage.html)
                         if (retryDashboard.account.isNotBlank()) {
-                            Log.i(TAG, "✅ 登录 API 返回非 JSONP，但首页显示已登录 (account=${retryDashboard.account})，返回 dashboard")
+                            Log.i(TAG, "✅ 登录 API 返回非 JSONP，但首页显示已登录，返回 dashboard")
                             return@withContext Result.success(retryDashboard)
                         }
                         if (lastErrorMsg == null) {
@@ -185,13 +221,13 @@ class CampusNetworkClient {
                     val json = jsonMatch.groupValues[1]
                     val result = Regex(""""result"\s*:\s*"?(\w+)"?""").find(json)?.groupValues?.getOrNull(1)
                     val msg = Regex(""""msg"\s*:\s*"([^"]*)"""").find(json)?.groupValues?.getOrNull(1)
-                    Log.i(TAG, "JSONP: result=$result, msg=$msg, user_account=$userAccount")
+                    Log.i(TAG, "JSONP: result=$result, msg=$msg")
 
                     if (result == "1") {
                         val dashboardPage = fetchPage("http://$HOST/")
                         val dashboard = parser.parse(dashboardPage.html)
                         if (dashboard.account.isNotBlank()) {
-                            Log.i(TAG, "✅ 登录成功，有效格式: $userAccount")
+                            Log.i(TAG, "✅ 登录成功，有效格式: ${maskAccount(userAccount)}")
                             return@withContext Result.success(dashboard)
                         }
                         return@withContext Result.failure(
@@ -215,7 +251,7 @@ class CampusNetworkClient {
                     }
                     appendLine("首页: HTTP ${home.httpCode}, 长度 ${home.html.length}")
                     appendLine("首页 URL: ${home.finalUrl}")
-                    appendLine("登录 IP: $wlanUserIp")
+                    appendLine("登录 IP 已获取: ${wlanUserIp != null}")
                 }
                 return@withContext Result.failure(LoginException(finalMsg.trim()))
             } catch (e: Exception) {
@@ -245,17 +281,17 @@ class CampusNetworkClient {
 
     private data class FetchedPage(val finalUrl: String, val html: String, val httpCode: Int)
 
-    private fun fetchPage(url: String): FetchedPage {
+    private fun fetchPage(url: String, httpClient: OkHttpClient = client): FetchedPage {
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", BROWSER_UA)
             .header("Referer", "http://$HOST/")
             .build()
-        client.newCall(request).execute().use { response ->
+        httpClient.newCall(request).execute().use { response ->
             val bytes = response.body?.bytes() ?: ByteArray(0)
             val html = decodeBody(bytes, response.header("Content-Type"))
             val finalUrl = response.request.url.toString()
-            Log.i(TAG, "GET $url -> final=$finalUrl, code=${response.code}, len=${bytes.size}")
+            Log.d(TAG, "GET $url -> code=${response.code}, len=${bytes.size}")
             return FetchedPage(finalUrl, html, response.code)
         }
     }
@@ -265,7 +301,7 @@ class CampusNetworkClient {
      * 带 X-Requested-With 等 AJAX 常用 Header — ePortal 前端是 AJAX 调这些接口，
      * 服务端可能据此返回不同响应。
      */
-    private fun callApiWithRetry(url: String, maxAttempts: Int = 2): Pair<Int, String> {
+    private suspend fun callApiWithRetry(url: String, maxAttempts: Int = 2): Pair<Int, String> {
         var lastCode = -1
         var lastBody = ""
         for (attempt in 1..maxAttempts) {
@@ -280,7 +316,7 @@ class CampusNetworkClient {
                 client.newCall(request).execute().use { resp ->
                     lastCode = resp.code
                     lastBody = resp.body?.string() ?: ""
-                    Log.i(TAG, "API 调用 attempt=$attempt: HTTP ${resp.code}, len=${lastBody.length}")
+                    Log.d(TAG, "API 调用 attempt=$attempt: HTTP ${resp.code}, len=${lastBody.length}")
                 }
                 if (lastCode !in 500..599) return Pair(lastCode, lastBody)
                 Log.w(TAG, "API $lastCode，attempt=$attempt 失败，准备重试")
@@ -289,7 +325,7 @@ class CampusNetworkClient {
                 lastBody = e.message ?: "异常"
             }
             if (attempt < maxAttempts) {
-                Thread.sleep(500)
+                delay(500) // 协程挂起等待，不占用 IO 线程
             }
         }
         return Pair(lastCode, lastBody)
@@ -325,17 +361,15 @@ class CampusNetworkClient {
             var ip = knownIp
                 ?: extractIpFromHtml(home.html)
                 ?: extractIpFromUrl(home.finalUrl)
-            Log.i(TAG, "注销：knownIp=$knownIp, 首页拿到 IP=$ip")
+            Log.i(TAG, "注销：knownIp 已知=${knownIp != null}, 首页拿到 IP=${ip != null}")
 
             if (ip == null) {
-                val redirect1 = fetchPage("http://1.1.1.1/")
+                val redirect1 = fetchPage("http://1.1.1.1/", probeClient())
                 ip = extractIpFromUrl(redirect1.finalUrl)
-                Log.i(TAG, "注销：从 1.1.1.1 重定向拿到 IP=$ip, redirectUrl=${redirect1.finalUrl}")
             }
             if (ip == null) {
-                val redirect2 = fetchPage("http://www.baidu.com/")
+                val redirect2 = fetchPage("http://www.baidu.com/", probeClient())
                 ip = extractIpFromUrl(redirect2.finalUrl)
-                Log.i(TAG, "注销：从 baidu 重定向拿到 IP=$ip, redirectUrl=${redirect2.finalUrl}")
             }
 
             if (ip.isNullOrEmpty()) {
@@ -352,10 +386,10 @@ class CampusNetworkClient {
                 append("wlan_user_ip=$ip&")
                 append("jsVersion=4.1&terminal_type=1&lang=zh&v=$ts")
             }
-            Log.i(TAG, "注销 URL: $url")
+            Log.i(TAG, "注销请求已构建")
 
             val (apiCode, apiBody) = callApiWithRetry(url, maxAttempts = 2)
-            Log.i(TAG, "注销响应: code=$apiCode, body=${apiBody.take(300)}")
+            Log.d(TAG, "注销响应: code=$apiCode")
 
             var apiOk = false
             val jsonMatch = Regex("""dr1004\(\{[\s\S]*\}\)""").find(apiBody)
@@ -370,15 +404,16 @@ class CampusNetworkClient {
                 apiOk = true
             }
 
-            // 验证是否真的断了网：尝试访问外部 HTTP 站点
-            // 如果仍能访问外网（未被重定向到 portal），说明服务端没踢会话
-            Thread.sleep(1000) // 给服务端一点时间处理
-            val verifyPage = fetchPage("http://www.baidu.com/")
+            // 验证是否真的断了网：绑定 WiFi 访问外部 HTTP 站点。
+            // 若仍能访问外网（未被重定向到 portal），说明服务端没踢会话。
+            // 绑定 WiFi 保证手机开着移动数据时不会误判（蜂窝当然还能上网）。
+            delay(1000) // 给服务端一点时间处理
+            val verifyPage = fetchPage("http://www.baidu.com/", probeClient())
             val stillOnline = !verifyPage.finalUrl.contains(HOST)
-            Log.i(TAG, "注销验证: finalUrl=${verifyPage.finalUrl}, stillOnline=$stillOnline")
+            Log.i(TAG, "注销验证: stillOnline=$stillOnline (apiOk=$apiOk)")
 
             if (stillOnline) {
-                Log.w(TAG, "⚠️ 注销后仍能访问外网，服务端会话未断")
+                Log.w(TAG, "⚠️ 注销后 WiFi 侧仍能访问外网，服务端会话未断")
                 cookieJar.clear()
                 return@withContext Result.failure(
                     LogoutException(
@@ -429,6 +464,10 @@ class CampusNetworkClient {
         return null
     }
 
+    /** 账号打码，避免明文账号进 release logcat。 */
+    private fun maskAccount(account: String): String =
+        if (account.length <= 4) "***" else account.take(3) + "****" + account.takeLast(2)
+
     companion object {
         const val HOST = "202.204.48.66"
         private const val TAG = "Netconnect"
@@ -457,7 +496,12 @@ private class InMemoryCookieJar : CookieJar {
     override fun loadForRequest(url: HttpUrl): List<Cookie> {
         val list = store[url.host] ?: return emptyList()
         val now = System.currentTimeMillis()
-        return list.filter { it.expiresAt > now }
+        val valid = list.filter { it.expiresAt > now }
+        // 顺手清掉已过期的 cookie，避免无限堆积
+        if (valid.size < list.size) {
+            list.removeAll { it.expiresAt <= now }
+        }
+        return valid
     }
 
     @Synchronized

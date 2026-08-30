@@ -70,13 +70,13 @@ class UpdateChecker {
             }
         }
 
-    /** "v1.2.3" / "1.2.3" / "V1.2.3" → "1.2.3" */
-    private fun normalizeVersion(v: String): String {
-        return v.trim().trimStart('v', 'V').ifEmpty { "0" }
+    /** "v1.2.3" / "1.2.3" / "V1.2.3" / "1.2.3-beta" → "1.2.3"（预发布后缀截断，避免数字段解析成 0） */
+    internal fun normalizeVersion(v: String): String {
+        return v.trim().trimStart('v', 'V').substringBefore('-').ifEmpty { "0" }
     }
 
     /** 比较 a.b.c 形式版本号：返回 >0 表示 a 更新，<0 表示 b 更新，0 表示相同 */
-    private fun compareVersions(a: String, b: String): Int {
+    internal fun compareVersions(a: String, b: String): Int {
         val pa = a.split(".").map { it.toIntOrNull() ?: 0 }
         val pb = b.split(".").map { it.toIntOrNull() ?: 0 }
         val maxLen = maxOf(pa.size, pb.size)

@@ -85,7 +85,7 @@ class DashboardViewModel(
     val billingResult: StateFlow<BillingResult> = _billingResult.asStateFlow()
 
     private var lastKnownIp: String? = null
-    private var autoLoginAttempted = false
+    private var lastAutoLoginAt = 0L
     private var lastFetchAt = 0L
 
     init {
@@ -128,12 +128,12 @@ class DashboardViewModel(
                         } catch (_: Exception) {
                             false
                         }
-                        // 自动登录救场：未登录/会话失效 且 设置了自动登录 且 有缓存凭据 且 本次还没试过
+                        // 自动登录救场：未登录/会话失效 且 设置了自动登录 且 有缓存凭据 且 距上次尝试超过节流窗口
                         if ((msg.contains("未登录") || msg.contains("会话已失效"))
-                            && !autoLoginAttempted
                             && canAutoLogin
+                            && System.currentTimeMillis() - lastAutoLoginAt > AUTO_LOGIN_RETRY_MS
                         ) {
-                            autoLoginAttempted = true
+                            lastAutoLoginAt = System.currentTimeMillis()
                             autoLogin()
                         } else {
                             // 原本的跳转逻辑保持不变
@@ -246,6 +246,8 @@ class DashboardViewModel(
             client.login(creds.account, creds.password, creds.carrier)
                 .onSuccess { dashboard ->
                     lastKnownIp = dashboard.ipv4.takeIf { it.isNotBlank() }
+                    // 会话已恢复：复位节流，下次真失效时可立即重试
+                    lastAutoLoginAt = 0L
                     CachedDashboard.clear()
                     _uiState.value = DashboardUiState.Success(dashboard)
                     recordTrafficSnapshot(dashboard)
@@ -296,6 +298,9 @@ class DashboardViewModel(
 
     companion object {
         private const val TAG = "DashboardViewModel"
+
+        /** 自动登录失败后的重试节流，防止会话异常时无限连环登录 */
+        private const val AUTO_LOGIN_RETRY_MS = 10 * 60_000L
     }
 }
 
