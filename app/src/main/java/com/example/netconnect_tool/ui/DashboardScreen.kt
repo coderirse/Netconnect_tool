@@ -32,26 +32,34 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.ProgressIndicatorDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -83,6 +91,7 @@ fun DashboardScreen(
     val historyEmpty by viewModel.historyEmpty.collectAsStateWithLifecycle()
     val billingResult by viewModel.billingResult.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+    var showLogoutConfirm by remember { mutableStateOf(false) }
 
     // 回到前台时按需刷新（距上次拉取 >60s 才触发，见 DashboardViewModel.onResumeRefresh）
     androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
@@ -152,15 +161,21 @@ fun DashboardScreen(
                     message = state.message,
                     onRetry = viewModel::refresh
                 )
-                is DashboardUiState.Success -> DashboardContent(
-                    dashboard = state.dashboard,
-                    trafficHistory = trafficHistory,
-                    historyMode = historyMode,
-                    historyEmpty = historyEmpty,
-                    billingResult = billingResult,
-                    onLogout = viewModel::logout,
-                    onSetHistoryMode = viewModel::setHistoryMode
-                )
+                is DashboardUiState.Success -> PullToRefreshBox(
+                    isRefreshing = isRefreshing,
+                    onRefresh = viewModel::refresh,
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    DashboardContent(
+                        dashboard = state.dashboard,
+                        trafficHistory = trafficHistory,
+                        historyMode = historyMode,
+                        historyEmpty = historyEmpty,
+                        billingResult = billingResult,
+                        onLogout = { showLogoutConfirm = true },
+                        onSetHistoryMode = viewModel::setHistoryMode
+                    )
+                }
             }
 
             if (logoutError != null) {
@@ -185,6 +200,24 @@ fun DashboardScreen(
                         }) {
                             Text("重试")
                         }
+                    }
+                )
+            }
+
+            // 注销会直接断开网络会话，二次确认防误触
+            if (showLogoutConfirm) {
+                AlertDialog(
+                    onDismissRequest = { showLogoutConfirm = false },
+                    title = { Text("注销登录？") },
+                    text = { Text("将断开当前校园网会话，断网后重新打开认证页即可再登录。") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            showLogoutConfirm = false
+                            viewModel.logout()
+                        }) { Text("确认注销") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showLogoutConfirm = false }) { Text("取消") }
                     }
                 )
             }
@@ -245,7 +278,7 @@ private fun DashboardContent(
         // 流量历史趋势图（默认按小时，可切换按天）
         item {
             Column {
-                // 模式切换
+                // 模式切换（分段按钮，比两个 FilterChip 更贴合 M3 单选语义）
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -258,17 +291,22 @@ private fun DashboardContent(
                         fontWeight = FontWeight.SemiBold
                     )
                     Spacer(Modifier.weight(1f))
-                    FilterChip(
-                        selected = historyMode == HistoryMode.HOURLY,
-                        onClick = { onSetHistoryMode(HistoryMode.HOURLY) },
-                        label = { Text("按小时") },
-                        modifier = Modifier.padding(end = 4.dp)
-                    )
-                    FilterChip(
-                        selected = historyMode == HistoryMode.DAILY,
-                        onClick = { onSetHistoryMode(HistoryMode.DAILY) },
-                        label = { Text("按天") }
-                    )
+                    SingleChoiceSegmentedButtonRow {
+                        SegmentedButton(
+                            selected = historyMode == HistoryMode.HOURLY,
+                            onClick = { onSetHistoryMode(HistoryMode.HOURLY) },
+                            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+                        ) {
+                            Text("按小时")
+                        }
+                        SegmentedButton(
+                            selected = historyMode == HistoryMode.DAILY,
+                            onClick = { onSetHistoryMode(HistoryMode.DAILY) },
+                            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+                        ) {
+                            Text("按天")
+                        }
+                    }
                 }
                 Spacer(Modifier.height(8.dp))
                 if (historyEmpty) {
@@ -330,7 +368,7 @@ private fun DashboardContent(
         // 连接信息
         item {
             InfoCard(
-                loginTime = dashboard.loginTime,
+                loginTime = dashboard.loginTimeDisplay,
                 ipv4 = dashboard.ipv4,
                 ipv6 = dashboard.ipv6
             )
@@ -404,9 +442,13 @@ private fun DashboardContent(
     }
 }
 
-/** 主卡片：剩余免费流量大字 + 本月用量进度条 + 计费小字 */
+/** 主卡片：剩余免费流量大字 + 本月用量进度条 + 计费小字。超量时转警示色。 */
 @Composable
 private fun TrafficHeroCard(dashboard: Dashboard, billing: BillingResult) {
+    val overQuota = dashboard.remainingFreeTrafficKb < 0
+    val alertColor = MaterialTheme.colorScheme.error
+    val normalColor = MaterialTheme.colorScheme.onPrimaryContainer
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(28.dp),
@@ -422,10 +464,10 @@ private fun TrafficHeroCard(dashboard: Dashboard, billing: BillingResult) {
             // 问候语：按周几变化，后续增改文案只需改 GreetingPool
             if (dashboard.nickname.isNotBlank()) {
                 Text(
-                    text = "你好，${dashboard.nickname}，${GreetingPool.greetingForToday()}",
+                    text = "你好，${dashboard.nickname} · ${GreetingPool.greetingForToday()}",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                    color = normalColor
                 )
                 Spacer(Modifier.height(12.dp))
             }
@@ -433,14 +475,14 @@ private fun TrafficHeroCard(dashboard: Dashboard, billing: BillingResult) {
                 Icon(
                     Icons.Filled.Wifi,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    tint = normalColor,
                     modifier = Modifier.size(20.dp)
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
                     text = dashboard.account.ifBlank { "已连接" },
                     style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                    color = normalColor
                 )
             }
 
@@ -449,35 +491,52 @@ private fun TrafficHeroCard(dashboard: Dashboard, billing: BillingResult) {
             Text(
                 text = "剩余免费流量（每月 ${Dashboard.MONTHLY_FREE_GB} GB）",
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                color = normalColor.copy(alpha = 0.7f)
             )
             Spacer(Modifier.height(4.dp))
             Text(
                 text = dashboard.remainingFreeTraffic,
                 style = MaterialTheme.typography.displaySmall,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
+                color = if (overQuota) alertColor else normalColor
             )
 
             Spacer(Modifier.height(16.dp))
 
             LinearProgressIndicator(
                 progress = { dashboard.usedFreeTrafficFraction },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics {
+                        contentDescription =
+                            "本月已用 ${dashboard.usedQuotaTraffic}，共 ${Dashboard.MONTHLY_FREE_GB} GB"
+                    },
+                color = if (overQuota) alertColor else ProgressIndicatorDefaults.linearColor
             )
             Spacer(Modifier.height(6.dp))
             Text(
                 text = "本月已用 ${dashboard.usedQuotaTraffic} / ${Dashboard.MONTHLY_FREE_GB} GB（IPv6 不计入）",
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                color = normalColor.copy(alpha = 0.7f)
             )
+
+            // 超量提示行：只有真超量才出现
+            if (overQuota) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "已超量 ${dashboard.overQuotaTraffic}，超出部分按预估单价计费",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = alertColor
+                )
+            }
 
             // 计费小字：本月已消耗余额 + 预估单价（扣费为 0 显示"积累中"）
             Spacer(Modifier.height(4.dp))
             Text(
                 text = billingText(billing),
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                color = normalColor.copy(alpha = 0.7f)
             )
         }
     }
@@ -521,6 +580,7 @@ private fun StatCard(
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                // 长文本（"421 小时 46 分钟"）适当缩字号，防换行/截断；sp 随系统字体缩放
                 fontSize = autoSizeFontSize(value)
             )
         }
@@ -674,7 +734,7 @@ internal fun UpdateResultDialog(
     }
 }
 
-/** 计费小字：本月已消耗余额（按 0.6 元/GB 超量估算）+ 算法预估单价（积累够数据才显示）。 */
+/** 计费小字：本月已消耗余额（有效单价优先，冷启动按 0.6 元/GB 估算）+ 算法预估单价。 */
 private fun billingText(billing: BillingResult): String {
     val estCost = String.format(Locale.US, "%.2f", billing.estimatedCostYuan)
     return if (billing.showPrice) {

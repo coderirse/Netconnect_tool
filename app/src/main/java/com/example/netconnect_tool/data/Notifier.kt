@@ -10,6 +10,7 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.example.netconnect_tool.MainActivity
+import com.example.netconnect_tool.R
 import com.example.netconnect_tool.data.model.Dashboard
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -103,7 +104,7 @@ class Notifier(private val context: Context) {
         )
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_sys_warning)
+            .setSmallIcon(R.drawable.ic_stat_traffic)
             .setContentTitle(title)
             .setContentText(content)
             .setStyle(NotificationCompat.BigTextStyle().bigText(content))

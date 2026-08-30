@@ -10,17 +10,23 @@ import com.example.netconnect_tool.data.CampusNetworkClient
 import com.example.netconnect_tool.data.CredentialStore
 import com.example.netconnect_tool.data.Notifier
 import com.example.netconnect_tool.data.TrafficHistoryStore
-import com.example.netconnect_tool.data.UpdateChecker
 import com.example.netconnect_tool.data.model.BillingResult
 import com.example.netconnect_tool.data.model.Dashboard
 import com.example.netconnect_tool.data.model.TrafficHistoryEntry
+import com.example.netconnect_tool.widget.TrafficWidgetData
+import com.example.netconnect_tool.widget.TrafficWidgetProvider
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 sealed interface DashboardUiState {
@@ -29,25 +35,20 @@ sealed interface DashboardUiState {
     data class Error(val message: String) : DashboardUiState
 }
 
-sealed interface UpdateState {
-    data object Idle : UpdateState
-    data object Checking : UpdateState
-    data class UpdateAvailable(val release: UpdateChecker.ReleaseInfo) : UpdateState
-    data object UpToDate : UpdateState
-    data class Error(val message: String) : UpdateState
-}
-
 /** 流量历史查看模式：按小时 / 按天 */
 enum class HistoryMode { HOURLY, DAILY }
 
 class DashboardViewModel(
+    context: Context,
     private val client: CampusNetworkClient,
-    private val appSettings: AppSettings? = null,
-    private val credentialStore: CredentialStore? = null,
-    private val trafficHistoryStore: TrafficHistoryStore? = null,
-    private val notifier: Notifier? = null,
-    private val billingStore: BillingStore? = null
+    private val appSettings: AppSettings,
+    private val credentialStore: CredentialStore,
+    private val trafficHistoryStore: TrafficHistoryStore,
+    private val notifier: Notifier,
+    private val billingStore: BillingStore
 ) : ViewModel() {
+
+    private val appContext = context.applicationContext
 
     private val _uiState = MutableStateFlow<DashboardUiState>(DashboardUiState.Loading)
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
@@ -68,17 +69,30 @@ class DashboardViewModel(
     private val _refreshError = MutableStateFlow<String?>(null)
     val refreshError: StateFlow<String?> = _refreshError.asStateFlow()
 
-    /** 流量历史（供折线图，默认按小时；可切换按天） */
-    private val _trafficHistory = MutableStateFlow<List<TrafficHistoryEntry>>(emptyList())
-    val trafficHistory: StateFlow<List<TrafficHistoryEntry>> = _trafficHistory.asStateFlow()
-
     /** 当前历史查看模式 */
     private val _historyMode = MutableStateFlow(HistoryMode.HOURLY)
     val historyMode: StateFlow<HistoryMode> = _historyMode.asStateFlow()
 
-    /** 历史是否至少有 1 个点（用于 UI 决定显示图表还是提示） */
-    private val _historyEmpty = MutableStateFlow(true)
-    val historyEmpty: StateFlow<Boolean> = _historyEmpty.asStateFlow()
+    /**
+     * 图表数据：响应式订阅采样库。切换模式、后台/前台记录新采样后自动更新，
+     * 不再需要手动 reload。
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val trafficHistory: StateFlow<List<TrafficHistoryEntry>> = _historyMode
+        .flatMapLatest { mode ->
+            when (mode) {
+                HistoryMode.HOURLY ->
+                    trafficHistoryStore.hourlyHistoryFlow(TrafficHistoryStore.HOURLY_RANGE)
+                HistoryMode.DAILY ->
+                    trafficHistoryStore.dailyHistoryFlow(TrafficHistoryStore.DAILY_RANGE)
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** 历史是否为空（用于 UI 决定显示图表还是提示） */
+    val historyEmpty: StateFlow<Boolean> = trafficHistory
+        .map { it.isEmpty() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
     /** 本月累计扣费 / 超量流量 / 预估单价（供主页小字展示） */
     private val _billingResult = MutableStateFlow(BillingResult(0.0, 0.0, 0.0, false))
@@ -89,9 +103,8 @@ class DashboardViewModel(
     private var lastFetchAt = 0L
 
     init {
-        reloadHistory()
-        billingStore?.result?.onEach { _billingResult.value = it }
-            ?.launchIn(viewModelScope)
+        billingStore.result.onEach { _billingResult.value = it }
+            .launchIn(viewModelScope)
         CachedDashboard.get()?.let { dashboard ->
             lastKnownIp = dashboard.ipv4.takeIf { it.isNotBlank() }
             _uiState.value = DashboardUiState.Success(dashboard)
@@ -116,6 +129,7 @@ class DashboardViewModel(
                         _uiState.value = DashboardUiState.Success(dashboard)
                         recordTrafficSnapshot(dashboard)
                         maybeNotifyLowTraffic(dashboard)
+                        syncWidget(dashboard)
                     }
                     .onFailure { e ->
                         val msg = e.message ?: "获取信息失败"
@@ -158,69 +172,47 @@ class DashboardViewModel(
         refresh()
     }
 
-    /** 切换历史查看模式（按小时 / 按天），并重新加载 */
+    /** 切换历史查看模式（按小时 / 按天），图表数据随 Flow 自动刷新 */
     fun setHistoryMode(mode: HistoryMode) {
         if (_historyMode.value == mode) return
         _historyMode.value = mode
-        reloadHistory()
-    }
-
-    /** 重新加载流量历史（按当前模式）。 */
-    private fun reloadHistory() {
-        val store = trafficHistoryStore ?: return
-        val mode = _historyMode.value
-        viewModelScope.launch {
-            val data = when (mode) {
-                HistoryMode.HOURLY -> store.hourlyHistory(TrafficHistoryStore.HOURLY_RANGE)
-                HistoryMode.DAILY -> store.dailyHistory(TrafficHistoryStore.DAILY_RANGE)
-            }
-            _trafficHistory.value = data
-            _historyEmpty.value = data.isEmpty()
-        }
     }
 
     /** 是否允许自动登录：设置开关 + 本地有保存凭据 */
     private suspend fun shouldAutoLogin(): Boolean {
-        val enabled = appSettings?.autoLoginEnabled?.first() ?: false
+        val enabled = appSettings.autoLoginEnabled.first()
         if (!enabled) return false
-        val creds = credentialStore?.getCredentials() ?: return false
+        val creds = credentialStore.getCredentials() ?: return false
         return creds.account.isNotBlank() && creds.password.isNotBlank()
     }
 
     /** 记录流量采样 + 计费采样（后台采集之外的前台兜底）。存储 IO 失败仅记日志，不影响 UI。 */
     private fun recordTrafficSnapshot(dashboard: Dashboard) {
         if (dashboard.usedTrafficV4Kb <= 0L) return
-        trafficHistoryStore?.let { store ->
-            viewModelScope.launch {
-                try {
-                    store.recordSample(dashboard.usedTrafficV4Kb)
-                    // 采样落库后刷新图表数据，让新时间点立刻可见
-                    reloadHistory()
-                } catch (ce: CancellationException) {
-                    throw ce
-                } catch (e: Exception) {
-                    Log.w(TAG, "记录流量采样失败", e)
-                }
+        viewModelScope.launch {
+            try {
+                trafficHistoryStore.recordSample(dashboard.usedTrafficV4Kb)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (e: Exception) {
+                Log.w(TAG, "记录流量采样失败", e)
             }
         }
         // balanceYuan 为 null 表示解析失败，跳过（不污染计费历史）
         val balance = dashboard.balanceYuan ?: return
-        billingStore?.let { store ->
-            viewModelScope.launch {
-                try {
-                    store.recordSnapshot(balanceYuan = balance, usedV4Kb = dashboard.usedTrafficV4Kb)
-                } catch (ce: CancellationException) {
-                    throw ce
-                } catch (e: Exception) {
-                    Log.w(TAG, "记录计费采样失败", e)
-                }
+        viewModelScope.launch {
+            try {
+                billingStore.recordSnapshot(balanceYuan = balance, usedV4Kb = dashboard.usedTrafficV4Kb)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (e: Exception) {
+                Log.w(TAG, "记录计费采样失败", e)
             }
         }
     }
 
     /** 前台刷新时检查低流量提醒（通知开启 + 剩余低于阈值才发） */
     private fun maybeNotifyLowTraffic(dashboard: Dashboard) {
-        if (appSettings == null || notifier == null) return
         viewModelScope.launch {
             try {
                 val enabled = appSettings.notifyEnabled.first()
@@ -236,10 +228,20 @@ class DashboardViewModel(
         }
     }
 
+    /** 刷新成功后同步桌面小部件（否则 widget 最长滞后一个后台采集周期 30 分钟） */
+    private fun syncWidget(dashboard: Dashboard) {
+        try {
+            TrafficWidgetData.save(appContext, dashboard)
+            TrafficWidgetProvider.updateAll(appContext)
+        } catch (e: Exception) {
+            Log.w(TAG, "同步桌面小部件失败", e)
+        }
+    }
+
     /** 静默自动登录：成功则展示 dashboard 刷新，失败则回到登录页（不弹窗） */
     private suspend fun autoLogin() {
         try {
-            val creds = credentialStore?.getCredentials() ?: run {
+            val creds = credentialStore.getCredentials() ?: run {
                 _needLogin.value = true
                 return
             }
@@ -252,6 +254,7 @@ class DashboardViewModel(
                     _uiState.value = DashboardUiState.Success(dashboard)
                     recordTrafficSnapshot(dashboard)
                     maybeNotifyLowTraffic(dashboard)
+                    syncWidget(dashboard)
                 }
                 .onFailure {
                     // 静默回到登录页，不弹窗。失败原因由登录页展示。
@@ -301,16 +304,5 @@ class DashboardViewModel(
 
         /** 自动登录失败后的重试节流，防止会话异常时无限连环登录 */
         private const val AUTO_LOGIN_RETRY_MS = 10 * 60_000L
-    }
-}
-
-/** 从 Context 读取当前 App 版本名 */
-fun currentVersionName(context: Context): String {
-    return try {
-        val pm = context.packageManager
-        val info = pm.getPackageInfo(context.packageName, 0)
-        info.versionName ?: "1.0"
-    } catch (_: Exception) {
-        "1.0"
     }
 }

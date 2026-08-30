@@ -12,35 +12,46 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -52,19 +63,17 @@ import kotlinx.coroutines.launch
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
-    currentVersion: String,
     onBack: () -> Unit
 ) {
     val autoLogin by viewModel.autoLoginEnabled.collectAsStateWithLifecycle()
     val notifyEnabled by viewModel.notifyEnabled.collectAsStateWithLifecycle()
     val thresholdGb by viewModel.thresholdGb.collectAsStateWithLifecycle()
     val justReset by viewModel.justReset.collectAsStateWithLifecycle()
+    val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
-    var updateState by remember { androidx.compose.runtime.mutableStateOf<UpdateState>(UpdateState.Idle) }
+    val scope = rememberCoroutineScope()
     var showResetConfirm by remember { mutableStateOf(false) }
-    val updateChecker = remember { UpdateChecker() }
-    val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
+    val snackbarHostState = remember { SnackbarHostState() }
 
     // 打开"剩余流量提醒"时若未授予通知权限（Android 13+），当场请求；被拒绝则提示
     val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -83,28 +92,21 @@ fun SettingsScreen(
             }
         }
     }
-    fun checkForUpdate() {
-        updateState = UpdateState.Checking
-        scope.launch {
-            updateChecker.checkLatestRelease(currentVersion)
-                .onSuccess { release ->
-                    updateState = if (release != null) {
-                        UpdateState.UpdateAvailable(release)
-                    } else {
-                        UpdateState.UpToDate
-                    }
-                }
-                .onFailure { e ->
-                    updateState = UpdateState.Error(e.message ?: "检查更新失败")
-                }
-        }
-    }
 
     // 重置成功后提示
-    androidx.compose.runtime.LaunchedEffect(justReset) {
+    LaunchedEffect(justReset) {
         if (justReset) {
             snackbarHostState.showSnackbar("计费数据已重置")
             viewModel.consumeResetNotice()
+        }
+    }
+
+    // 检查更新失败走 Snackbar，成功/无更新走对话框
+    LaunchedEffect(updateState) {
+        val state = updateState
+        if (state is UpdateState.Error) {
+            snackbarHostState.showSnackbar("检查更新失败：${state.message}")
+            viewModel.consumeUpdateState()
         }
     }
 
@@ -113,11 +115,13 @@ fun SettingsScreen(
             TopAppBar(
                 title = { Text("设置") },
                 navigationIcon = {
-                    TextButton(onClick = onBack) { Text("返回") }
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
                 }
             )
         },
-        snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) }
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         Column(
             modifier = Modifier
@@ -134,6 +138,24 @@ fun SettingsScreen(
                 checked = autoLogin,
                 onCheckedChange = viewModel::setAutoLoginEnabled
             )
+
+            // 凭据明文存储警示（仅加密回退的设备可见）
+            if (!viewModel.credentialEncrypted) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Text(
+                        text = "当前设备不支持加密存储，账号密码以明文保存在本机。请注意勿将手机借给他人使用。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+            }
 
             // 剩余流量提醒
             SettingSwitchCard(
@@ -194,7 +216,20 @@ fun SettingsScreen(
                         Spacer(Modifier.width(12.dp))
                         Text("当前版本", style = MaterialTheme.typography.bodyMedium)
                         Spacer(Modifier.weight(1f))
-                        TextButton(onClick = { checkForUpdate() }) { Text("检查更新") }
+                        Text(
+                            text = "v${viewModel.versionName}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        if (updateState == UpdateState.Checking) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            TextButton(onClick = viewModel::checkForUpdate) { Text("检查更新") }
+                        }
                     }
                     HorizontalDivider()
                     Row(
@@ -212,7 +247,7 @@ fun SettingsScreen(
                 }
             }
 
-            // 计费重置
+            // 计费重置：破坏性操作，降为描边按钮 + error 色，不与主操作抢视觉权重
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(24.dp),
@@ -228,9 +263,12 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(10.dp))
-                    Button(
+                    OutlinedButton(
                         onClick = { showResetConfirm = true },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
                     ) { Text("重置计费数据") }
                 }
             }
@@ -238,7 +276,7 @@ fun SettingsScreen(
             // 底部版权
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
             Text(
-                text = "Net-USTB v$currentVersion",
+                text = "Net-USTB v${viewModel.versionName}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.outline,
                 textAlign = TextAlign.Center,
@@ -268,11 +306,12 @@ fun SettingsScreen(
     // 检查更新结果对话框
     UpdateResultDialog(
         state = updateState,
-        onDismiss = { updateState = UpdateState.Idle },
+        onDismiss = viewModel::consumeUpdateState,
         onOpenRelease = { url -> openUrl(context, url) }
     )
 }
 
+/** 开关卡片：整卡可点（toggleable 在行级），Switch 仅作状态展示。 */
 @Composable
 private fun SettingSwitchCard(
     title: String,
@@ -290,6 +329,12 @@ private fun SettingSwitchCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .toggleable(
+                    value = checked,
+                    role = Role.Switch,
+                    // foundation 新参数名（原 onCheckedChange）
+                    onValueChange = onCheckedChange
+                )
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -301,7 +346,8 @@ private fun SettingSwitchCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Switch(checked = checked, onCheckedChange = onCheckedChange)
+            // onCheckedChange = null：状态切换统一交给行级 toggleable，避免双重响应
+            Switch(checked = checked, onCheckedChange = null)
         }
     }
 }

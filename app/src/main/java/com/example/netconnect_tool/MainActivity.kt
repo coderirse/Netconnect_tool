@@ -132,6 +132,7 @@ private fun AppNavigation(
         composable("dashboard") {
             val viewModel: DashboardViewModel = viewModel {
                 DashboardViewModel(
+                    context = context.applicationContext,
                     client = client,
                     appSettings = appSettings,
                     credentialStore = credentialStore,
@@ -154,11 +155,15 @@ private fun AppNavigation(
         }
         composable("settings") {
             val viewModel: SettingsViewModel = viewModel {
-                SettingsViewModel(appSettings = appSettings, billingStore = billingStore)
+                SettingsViewModel(
+                    appSettings = appSettings,
+                    billingStore = billingStore,
+                    credentialStore = credentialStore,
+                    currentVersion = currentVersion
+                )
             }
             SettingsScreen(
                 viewModel = viewModel,
-                currentVersion = currentVersion,
                 onBack = { navController.popBackStack() }
             )
         }

@@ -13,6 +13,7 @@
     android:maxResizeHeight="110dp"
     android:updatePeriodMillis="0"
     android:initialLayout="@layout/traffic_widget"
+    android:previewLayout="@layout/traffic_widget"
     android:widgetCategory="home_screen"
     android:resizeMode="horizontal|vertical"
     android:description="@string/widget_gauge_desc" />
