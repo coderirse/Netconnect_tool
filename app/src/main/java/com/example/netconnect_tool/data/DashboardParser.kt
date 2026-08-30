@@ -14,7 +14,7 @@ class DashboardParser {
 
         val account = extractAccount(html, doc)
         val balance = extractBalance(html, doc)
-        val balanceYuan = extractBalanceYuan(html)
+        val balanceYuan = extractBalanceYuan(html, doc)
         val trafficV4 = extractTrafficV4(html, doc)
         val trafficV6 = extractTrafficV6(html, doc)
 
@@ -72,17 +72,20 @@ class DashboardParser {
         return ""
     }
 
-    /** 余额数值（元）：优先 fee/10000.0，再尝试从显示字符串反解，均失败返回 0.0 */
-    private fun extractBalanceYuan(html: String): Double {
+    /**
+     * 余额数值（元）：优先 fee/10000.0（支持负值=欠费），再在余额元素文本内反解。
+     * 解析失败返回 null（而不是 0.0），避免把失败误当成"余额为 0"污染计费采样。
+     */
+    private fun extractBalanceYuan(html: String, doc: Document): Double? {
         extractJsVariable(html, "fee")?.trim()?.toLongOrNull()?.let { fee ->
             return fee / 10000.0
         }
-        // 从页面余额文本反解，如 "17.93 元" / "17.93"
-        val labelMatch = Regex("""(\d+\.?\d*)\s*元""").find(html)
-        if (labelMatch != null) {
-            return labelMatch.groupValues[1].toDoubleOrNull() ?: 0.0
-        }
-        return 0.0
+        // 只在余额元素文本内反解（如 "-3.21 元"），避免匹配到公告等任意"xx元"文本
+        val text = doc.selectFirst("#user_usetime p")?.text()
+            ?: doc.selectFirst("#user_usetime")?.text()
+            ?: return null
+        return Regex("""(-?\d+\.?\d*)\s*元?""").find(text)
+            ?.groupValues?.getOrNull(1)?.toDoubleOrNull()
     }
 
     private fun extractTrafficV4(html: String, doc: Document): TrafficInfo {

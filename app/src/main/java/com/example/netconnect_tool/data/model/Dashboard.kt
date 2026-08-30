@@ -12,7 +12,7 @@ data class Dashboard(
     val ipv4: String,
     val ipv6: String,
     val bulletin: List<BulletinItem>,
-    val balanceYuan: Double = 0.0,
+    val balanceYuan: Double? = null,  // null = 解析失败（区别于余额真为 0）
     val nickname: String = ""
 ) {
     val usedTimeDisplay: String

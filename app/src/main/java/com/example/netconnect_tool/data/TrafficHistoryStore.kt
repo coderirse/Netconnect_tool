@@ -50,27 +50,31 @@ class TrafficHistoryStore(private val context: Context) {
         }
     }
 
-    /** 近 N 小时聚合（每整点一条，date 记为 "HH:00"，kb 取该桶最新值）。 */
+    /** 近 N 小时聚合：每整点一桶，label 为 "HH:00"，usageKb 为该小时新增用量。 */
     suspend fun hourlyHistory(hours: Int = HOURLY_RANGE): List<TrafficHistoryEntry> {
         val samples = currentSamples()
         if (samples.isEmpty()) return emptyList()
         val now = System.currentTimeMillis()
         val startBucket = floorToHour(now - hours * 3600_000L)
-        // 桶 key -> 最新样本
+        // 桶 key -> 该桶最新样本（后写的覆盖）
         val bucketMap = LinkedHashMap<Long, TrafficSample>()
         samples.forEach { s ->
             val bucket = floorToHour(s.timestamp)
-            if (bucket >= startBucket) bucketMap[bucket] = s  // 后写的覆盖，取该桶最新
+            if (bucket >= startBucket) bucketMap[bucket] = s
         }
+        // 窗口前最后一个样本作为首桶增量基线；没有则首桶记 0（增量未知）
+        var prevKb: Long? = samples.lastOrNull { floorToHour(it.timestamp) < startBucket }?.usedV4Kb
         return bucketMap.entries.sortedBy { it.key }.map { (bucket, s) ->
+            val usage = usageDelta(prevKb, s.usedV4Kb)
+            prevKb = s.usedV4Kb
             TrafficHistoryEntry(
-                date = SimpleDateFormat("HH:00", Locale.US).format(Date(bucket)),
-                usedTrafficV4Kb = s.usedV4Kb
+                label = SimpleDateFormat("HH:00", Locale.US).format(Date(bucket)),
+                usageKb = usage
             )
         }
     }
 
-    /** 近 N 天聚合（每天一条，date 记为 "yyyy-MM-dd"，kb 取该日最新值）。 */
+    /** 近 N 天聚合：每天一桶，label 为 "MM-dd"，usageKb 为当天新增用量。 */
     suspend fun dailyHistory(days: Int = DAILY_RANGE): List<TrafficHistoryEntry> {
         val samples = currentSamples()
         if (samples.isEmpty()) return emptyList()
@@ -81,12 +85,22 @@ class TrafficHistoryStore(private val context: Context) {
             val bucket = floorToDay(s.timestamp)
             if (bucket >= startDay) bucketMap[bucket] = s
         }
+        var prevKb: Long? = samples.lastOrNull { floorToDay(it.timestamp) < startDay }?.usedV4Kb
         return bucketMap.entries.sortedBy { it.key }.map { (bucket, s) ->
+            val usage = usageDelta(prevKb, s.usedV4Kb)
+            prevKb = s.usedV4Kb
             TrafficHistoryEntry(
-                date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(bucket)),
-                usedTrafficV4Kb = s.usedV4Kb
+                label = SimpleDateFormat("MM-dd", Locale.US).format(Date(bucket)),
+                usageKb = usage
             )
         }
+    }
+
+    /** 相邻累计值之差；计数器清零（跨月）时取当前值本身；无基线时记 0 */
+    private fun usageDelta(prevKb: Long?, currentKb: Long): Long = when {
+        prevKb == null -> 0L
+        currentKb >= prevKb -> currentKb - prevKb
+        else -> currentKb
     }
 
     private suspend fun currentSamples(): List<TrafficSample> {

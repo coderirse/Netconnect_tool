@@ -63,6 +63,24 @@ fun SettingsScreen(
     var showResetConfirm by remember { mutableStateOf(false) }
     val updateChecker = remember { UpdateChecker() }
     val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
+
+    // 打开"剩余流量提醒"时若未授予通知权限（Android 13+），当场请求；被拒绝则提示
+    val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted) {
+            scope.launch { snackbarHostState.showSnackbar("未授予通知权限，流量提醒将无法送达") }
+        }
+    }
+
+    fun maybeRequestNotificationPermission() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            val perm = android.Manifest.permission.POST_NOTIFICATIONS
+            if (context.checkSelfPermission(perm) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                permissionLauncher.launch(perm)
+            }
+        }
+    }
     fun checkForUpdate() {
         updateState = UpdateState.Checking
         scope.launch {
@@ -120,7 +138,10 @@ fun SettingsScreen(
                 title = "剩余流量提醒",
                 subtitle = "剩余免费流量低于阈值时通知",
                 checked = notifyEnabled,
-                onCheckedChange = viewModel::setNotifyEnabled
+                onCheckedChange = { enabled ->
+                    viewModel.setNotifyEnabled(enabled)
+                    if (enabled) maybeRequestNotificationPermission()
+                }
             )
 
             // 档位阈值

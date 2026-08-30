@@ -6,12 +6,13 @@ plugins {
 }
 
 // 读取本地签名配置（keystore.properties 已在 .gitignore 排除，不上传 GitHub）
-// 文件不存在时跳过，保证 assembleDebug / fork 环境仍可正常构建。
+// 文件不存在或字段不全时跳过，保证 assembleDebug / fork 环境仍可正常构建。
 val keystoreProps = Properties().apply {
     val f = rootProject.file("keystore.properties")
     if (f.exists()) f.inputStream().use { load(it) }
 }
-val hasReleaseSigning = keystoreProps.getProperty("storeFile") != null
+val signingKeys = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+val hasReleaseSigning = signingKeys.all { !keystoreProps.getProperty(it).isNullOrBlank() }
 
 android {
     namespace = "com.example.netconnect_tool"
@@ -25,8 +26,8 @@ android {
         applicationId = "com.example.netconnect_tool"
         minSdk = 24
         targetSdk = 36
-        versionCode = 12
-        versionName = "1.0.11"
+        versionCode = 13
+        versionName = "1.0.12"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

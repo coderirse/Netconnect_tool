@@ -33,17 +33,48 @@ class BillingCalculatorTest {
     }
 
     @Test
-    fun `单价为累计扣费除以累计超量`() {
-        // 超量 10GB，扣费 2 元 → 单价 0.2 元/GB
+    fun `单价为窗口扣费除以窗口超量增量`() {
+        // 余额 20 → 18（扣 2 元），超量 10GB → 15GB（新增 5GB）→ 单价 0.4 元/GB
         val list = listOf(
             snap(20.0, 130.0),
-            snap(18.0, 130.0),  // 扣了 2 元，但超量仍是 10GB（this sample）
+            snap(18.0, 135.0),
         )
-        // 超量 = 130 - 120 = 10GB；cost = 2
         val r = BillingCalculator.calculate(list)
         assertEquals(2.0, r.costYuan, 0.001)
+        assertEquals(15.0, r.overGb, 0.001)  // 展示用：最新总超量
+        assertEquals(0.4, r.unitPriceYuanPerGb, 0.001)
+    }
+
+    @Test
+    fun `余额下降但超量未动_扣费累计但不显示单价`() {
+        // 余额 20 → 18 但流量没涨（扣费滞后/非流量扣费）：扣费计入分子，但分母为 0 不出单价
+        val list = listOf(
+            snap(20.0, 130.0),
+            snap(18.0, 130.0),
+        )
+        val r = BillingCalculator.calculate(list)
+        assertEquals(2.0, r.costYuan, 0.001)
+        assertFalse(r.showPrice)
+    }
+
+    @Test
+    fun `欠费阶段余额为负仍正常计费`() {
+        // 余额 5 → -3（扣 8 元），超量 10GB → 15GB（窗口新增 5GB）→ 单价 1.6 元/GB
+        val list = listOf(
+            snap(5.0, 130.0),
+            snap(-3.0, 135.0),
+        )
+        val r = BillingCalculator.calculate(list)
+        assertEquals(8.0, r.costYuan, 0.001)
+        assertEquals(1.6, r.unitPriceYuanPerGb, 0.001)
+    }
+
+    @Test
+    fun `估算消费按固定单价乘总超量`() {
+        // 最新超量 10GB → 估算消费 10 × 0.6 = 6 元（单点即可算，不依赖采样数）
+        val r = BillingCalculator.calculate(listOf(snap(20.0, 130.0)))
         assertEquals(10.0, r.overGb, 0.001)
-        assertEquals(0.2, r.unitPriceYuanPerGb, 0.001)
+        assertEquals(6.0, r.estimatedCostYuan, 0.001)
     }
 
     @Test

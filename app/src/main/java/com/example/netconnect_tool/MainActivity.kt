@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -32,6 +33,7 @@ import com.example.netconnect_tool.ui.SettingsScreen
 import com.example.netconnect_tool.ui.SettingsViewModel
 import com.example.netconnect_tool.ui.currentVersionName
 import com.example.netconnect_tool.ui.theme.Netconnect_toolTheme
+import kotlinx.coroutines.flow.first
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -71,33 +73,47 @@ private fun AppNavigation(
     currentVersion: String
 ) {
     val navController = rememberNavController()
-    // 首次启动请求通知权限（Android 13+ 必须，否则通知不显示）
+    // 启动时请求通知权限（Android 13+ 必须，否则通知不显示）；仅在提醒开关开启时打扰用户，
+    // 同一进程最多问一次（拒绝后可到设置页重新打开开关触发请求）
     val context = androidx.compose.ui.platform.LocalContext.current
+    val askedThisProcess = androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
     val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { }
     LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val granted = android.Manifest.permission.POST_NOTIFICATIONS
-            val check = context.checkSelfPermission(granted) == PackageManager.PERMISSION_GRANTED
-            if (!check) permissionLauncher.launch(granted)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !askedThisProcess.value) {
+            askedThisProcess.value = true
+            val perm = android.Manifest.permission.POST_NOTIFICATIONS
+            val enabled = try {
+                appSettings.notifyEnabled.first()
+            } catch (_: Exception) {
+                true
+            }
+            if (enabled && context.checkSelfPermission(perm) != PackageManager.PERMISSION_GRANTED) {
+                permissionLauncher.launch(perm)
+            }
         }
     }
     NavHost(
         navController = navController,
         startDestination = "dashboard",
-        // 淡入 + 水平滑动过渡，流畅舒适
+        // 书页式转场：新页从右往左整页盖入，旧页带 1/4 视差左移并微暗；
+        // 返回时反向（当前页向右翻走，前页从左复位）
         enterTransition = {
-            fadeIn(animationSpec = tween(220)) + slideInHorizontally(animationSpec = tween(220)) { it / 12 }
+            slideInHorizontally(animationSpec = tween(300, easing = FastOutSlowInEasing)) { it } +
+                fadeIn(animationSpec = tween(300), initialAlpha = 0.6f)
         },
         exitTransition = {
-            fadeOut(animationSpec = tween(180)) + slideOutHorizontally(animationSpec = tween(180)) { -it / 16 }
+            slideOutHorizontally(animationSpec = tween(300, easing = FastOutSlowInEasing)) { -it / 4 } +
+                fadeOut(animationSpec = tween(300), targetAlpha = 0.7f)
         },
         popEnterTransition = {
-            fadeIn(animationSpec = tween(220)) + slideInHorizontally(animationSpec = tween(220)) { -it / 12 }
+            slideInHorizontally(animationSpec = tween(300, easing = FastOutSlowInEasing)) { -it / 4 } +
+                fadeIn(animationSpec = tween(300), initialAlpha = 0.7f)
         },
         popExitTransition = {
-            fadeOut(animationSpec = tween(180)) + slideOutHorizontally(animationSpec = tween(180)) { it / 16 }
+            slideOutHorizontally(animationSpec = tween(300, easing = FastOutSlowInEasing)) { it } +
+                fadeOut(animationSpec = tween(300), targetAlpha = 0.6f)
         }
     ) {
         composable("login") {
@@ -117,7 +133,6 @@ private fun AppNavigation(
             val viewModel: DashboardViewModel = viewModel {
                 DashboardViewModel(
                     client = client,
-                    currentVersion = currentVersion,
                     appSettings = appSettings,
                     credentialStore = credentialStore,
                     trafficHistoryStore = trafficHistoryStore,

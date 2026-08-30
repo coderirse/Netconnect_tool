@@ -62,6 +62,7 @@ import com.example.netconnect_tool.data.model.BillingResult
 import com.example.netconnect_tool.data.model.BulletinItem
 import com.example.netconnect_tool.data.model.Dashboard
 import com.example.netconnect_tool.data.model.TrafficHistoryEntry
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -82,6 +83,12 @@ fun DashboardScreen(
     val historyEmpty by viewModel.historyEmpty.collectAsStateWithLifecycle()
     val billingResult by viewModel.billingResult.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // 回到前台时按需刷新（距上次拉取 >60s 才触发，见 DashboardViewModel.onResumeRefresh）
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        viewModel.onResumeRefresh()
+        onPauseOrDispose { }
+    }
 
     LaunchedEffect(loggedOut) {
         if (loggedOut) {
@@ -267,13 +274,13 @@ private fun DashboardContent(
                 if (historyEmpty) {
                     Text(
                         text = if (historyMode == HistoryMode.HOURLY)
-                            "暂无数小时数据，稍后再看" else "暂无数天数据，稍后再看",
+                            "暂无近 24 小时数据，稍后再看" else "暂无近 30 天数据，稍后再看",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.outline,
                         modifier = Modifier.padding(16.dp)
                     )
                 } else {
-                    TrafficHistoryChart(trafficHistory)
+                    TrafficHistoryChart(trafficHistory, historyMode)
                 }
             }
         }
@@ -667,14 +674,14 @@ internal fun UpdateResultDialog(
     }
 }
 
-/** 计费小字：本月已消耗余额 + 预估单价。累计扣费为 0 时单价显示"积累中"。 */
+/** 计费小字：本月已消耗余额（按 0.6 元/GB 超量估算）+ 算法预估单价（积累够数据才显示）。 */
 private fun billingText(billing: BillingResult): String {
-    val cost = String.format("%.2f", billing.costYuan)
+    val estCost = String.format(Locale.US, "%.2f", billing.estimatedCostYuan)
     return if (billing.showPrice) {
-        val price = String.format("%.2f", billing.unitPriceYuanPerGb)
-        "本月已消耗余额 $cost 元 · 预估单价 $price 元/GB"
+        val price = String.format(Locale.US, "%.2f", billing.unitPriceYuanPerGb)
+        "本月已消耗余额 ≈$estCost 元 · 预估单价 $price 元/GB"
     } else {
-        "本月已消耗余额 $cost 元 · 预估单价积累中"
+        "本月已消耗余额 ≈$estCost 元 · 预估单价积累中"
     }
 }
 

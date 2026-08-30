@@ -61,26 +61,36 @@ data class BillingSnapshot(
 
 /** 计费计算结果。 */
 data class BillingResult(
-    val costYuan: Double,          // 本月累计扣费（元）
-    val overGb: Double,            // 本月超量 V4 流量（GB）
-    val unitPriceYuanPerGb: Double, // 累计平均单价（元/GB）；累计扣费为 0 时无意义
-    val hasData: Boolean           // 累计扣费 > 0 才为 true，否则 UI 显示"积累中"
+    val costYuan: Double,          // 观察窗口内余额累计下降（元，充值上升不计）
+    val overGb: Double,            // 最新采样相对 120 GB 的总超量（GB）
+    val unitPriceYuanPerGb: Double, // 算法预估单价（元/GB）= 窗口扣费 ÷ 窗口超量增量
+    val hasData: Boolean           // 采样数 ≥ 2 才为 true（单价需要至少一次余额对比）
 ) {
-    /** 该月是否"已观察到扣费且已超量"——两者都为正才显示单价 */
-    val showPrice: Boolean get() = hasData && costYuan > 0.0 && overGb > 0.0
+    /** 是否已观察到有效扣费——单价大于 0 才显示，否则 UI 显示"积累中" */
+    val showPrice: Boolean get() = hasData && unitPriceYuanPerGb > 0.0
+
+    /** 按已知单价（0.6 元/GB，待验证）估算的本月流量消费 */
+    val estimatedCostYuan: Double get() = overGb * BillingCalculator.ASSUMED_PRICE_YUAN_PER_GB
 }
 
 /**
  * 计费算法（纯逻辑，便于单元测试）。
  * 输入：某自然月内按时间升序的一组计费采样。
  * 规则：
- *  - 余额下降 → 差额累加为"累计扣费"；余额上升（充值）→ 忽略，作为新基准。
- *  - 超量流量 = max(0, 最新采样 usedV4 - 120GB)，仅计入 V4。
- *  - 单价 = 累计扣费 / 超量流量（GB）。累计扣费为 0 时不显示单价。
+ *  - 累计扣费 = 窗口内余额下降之和（充值上升不计，作为新基准）。
+ *  - 计价流量 = 窗口内超量（超过 120GB 部分）的增量。
+ *  - 单价 = 累计扣费 / 计价流量（GB），分子分母同窗口、口径一致。
+ *  - 注意：校园网扣费相对流量计数有滞后（事后结算），逐区间配对会严重失真，
+ *    只能用窗口总量估算；窗口越长越接近真实单价。
+ *  - 余额允许为负（欠费阶段照常计费）。
  */
 object BillingCalculator {
 
     const val MONTHLY_FREE_GB = 120
+
+    /** 打听到的校园网超量单价（元/GB），用于估算消费；未经官方确认，用预估单价长期对比验证 */
+    const val ASSUMED_PRICE_YUAN_PER_GB = 0.6
+
     private const val KB_PER_GB = 1024L * 1024L
 
     fun calculate(snapshots: List<BillingSnapshot>): BillingResult {
@@ -95,15 +105,17 @@ object BillingCalculator {
         for (i in 1 until sorted.size) {
             val cur = sorted[i].balanceYuan
             val drop = prevBalance - cur
-            if (drop > 0) cost += drop  // 余额下降 = 扣费
-            prevBalance = cur           // 无论升降都更新基准
+            if (drop > 0.0) cost += drop  // 余额下降 = 扣费；上升 = 充值，不计
+            prevBalance = cur             // 无论升降都更新基准
         }
 
-        val latestV4 = sorted.last().usedV4Kb
-        val overKb = (latestV4 - MONTHLY_FREE_GB * KB_PER_GB).coerceAtLeast(0L)
-        val overGb = overKb / (1024.0 * 1024.0)
-
-        val unitPrice = if (cost > 0.0 && overGb > 0.0) cost / overGb else 0.0
+        val overGb = overKbOf(sorted.last().usedV4Kb) / KB_PER_GB.toDouble()
+        val windowOverKb = overKbOf(sorted.last().usedV4Kb) - overKbOf(sorted.first().usedV4Kb)
+        val unitPrice = if (cost > 0.0 && windowOverKb > 0L) {
+            cost / (windowOverKb / KB_PER_GB.toDouble())
+        } else {
+            0.0
+        }
         return BillingResult(
             costYuan = cost,
             overGb = overGb,
@@ -111,6 +123,10 @@ object BillingCalculator {
             hasData = snapshots.size >= 2
         )
     }
+
+    /** 相对每月免费额度的超量（KB），未超量为 0 */
+    private fun overKbOf(usedV4Kb: Long): Long =
+        (usedV4Kb - MONTHLY_FREE_GB * KB_PER_GB).coerceAtLeast(0L)
 }
 
 /** 取某 timestamp 所在的自然月标识，如 "2026-08"。 */

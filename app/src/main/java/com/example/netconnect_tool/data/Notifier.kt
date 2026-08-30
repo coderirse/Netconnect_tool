@@ -3,10 +3,12 @@ package com.example.netconnect_tool.data
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import com.example.netconnect_tool.MainActivity
 import com.example.netconnect_tool.data.model.Dashboard
 import java.text.SimpleDateFormat
@@ -89,9 +91,8 @@ class Notifier(private val context: Context) {
     }
 
     private fun send(title: String, content: String, dedupKey: String, today: String) {
-        // 标记今天已提醒
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putString(dedupKey, today).apply()
+        // 通知被系统/用户关闭时不发，也不写去重标记（恢复授权后当天仍可补发）
+        if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return
 
         val intent = Intent(context, MainActivity::class.java)
         val pending = PendingIntent.getActivity(
@@ -110,7 +111,12 @@ class Notifier(private val context: Context) {
             .setContentIntent(pending)
             .build()
 
-        val manager = context.getSystemService(NotificationManager::class.java)
-        manager.notify(NOTIFICATION_ID, notification)
+        // 上面已检查 areNotificationsEnabled，此处必然有通知能力
+        @SuppressLint("MissingPermission")
+        NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification)
+
+        // 发送成功后才标记今天已提醒
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putString(dedupKey, today).apply()
     }
 }

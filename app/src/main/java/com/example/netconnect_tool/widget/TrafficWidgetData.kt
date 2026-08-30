@@ -30,7 +30,7 @@ object TrafficWidgetData {
             .edit()
             .putFloat(KEY_PERCENT, percent)
             .putFloat(KEY_REMAIN_GB, remainingGb.toFloat())
-            .putFloat(KEY_BALANCE, dashboard.balanceYuan.toFloat())
+            .putFloat(KEY_BALANCE, (dashboard.balanceYuan ?: 0.0).toFloat())
             .putBoolean(KEY_HAS_DATA, dashboard.account.isNotBlank())
             .apply()
     }

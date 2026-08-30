@@ -35,9 +35,9 @@ class BillingStore(private val context: Context) {
             }
         }
 
-    /** 记录一次采样。若月份已切换，清空旧数据重新记账。 */
+    /** 记录一次采样。若月份已切换，清空旧数据重新记账。余额允许为负（欠费阶段照常计费）。 */
     suspend fun recordSnapshot(balanceYuan: Double, usedV4Kb: Long) {
-        if (balanceYuan < 0.0 || usedV4Kb <= 0L) return
+        if (balanceYuan.isNaN() || usedV4Kb <= 0L) return
         val nowMonth = currentMonthKey()
         context.billingDataStore.edit { prefs ->
             val storedMonth = prefs[KEY_MONTH]

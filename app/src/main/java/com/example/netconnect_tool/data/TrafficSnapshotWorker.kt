@@ -38,11 +38,14 @@ class TrafficSnapshotWorker(
                     Log.i(TAG, "后台拉取无有效 V4 流量，跳过")
                 }
 
-                // 计费采样：记录 {时间, 余额, usedV4}，用于反推累计平均单价
-                billingStore.recordSnapshot(
-                    balanceYuan = dashboard.balanceYuan,
-                    usedV4Kb = dashboard.usedTrafficV4Kb
-                )
+                // 计费采样：记录 {时间, 余额, usedV4}，用于反推预估单价
+                // balanceYuan 为 null 表示解析失败，跳过（不污染计费历史）
+                dashboard.balanceYuan?.let { balance ->
+                    billingStore.recordSnapshot(
+                        balanceYuan = balance,
+                        usedV4Kb = dashboard.usedTrafficV4Kb
+                    )
+                }
 
                 // 低流量提醒：通知开启 + 剩余低于阈值 才发
                 if (appSettings.notifyEnabled.first()) {

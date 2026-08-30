@@ -16,13 +16,14 @@ import android.graphics.Typeface
 import android.widget.RemoteViews
 import com.example.netconnect_tool.MainActivity
 import com.example.netconnect_tool.R
+import com.example.netconnect_tool.data.model.Dashboard
 import java.util.Locale
 
 /**
  * 桌面小部件：圆环仪表盘显示剩余流量。
- * - 中心大字 = 剩余百分比，下方 = 剩余 GB
- * - 圆环绿色渐变，剩得多越绿越满；剩得少变黄/红
- * - 点击整卡打开 App
+ * - 顶部：标题 + 余额；中央：剩余百分比 + 剩余/已超 GB；底部：本月已用
+ * - 圆环按剩余比例取色渐变（多→绿，少→黄，超量→红）
+ * - 无数据时显示占位提示；点击整卡打开 App
  */
 class TrafficWidgetProvider : AppWidgetProvider() {
 
@@ -30,10 +31,6 @@ class TrafficWidgetProvider : AppWidgetProvider() {
         appWidgetIds.forEach { id ->
             updateWidget(context, appWidgetManager, id)
         }
-    }
-
-    override fun onEnabled(context: Context) {
-        super.onEnabled(context)
     }
 
     companion object {
@@ -55,97 +52,133 @@ class TrafficWidgetProvider : AppWidgetProvider() {
             appWidgetManager.updateAppWidget(appWidgetId, views)
         }
 
-        /** 把圆环仪表盘画成 Bitmap（含中央文字、E/F 刻度、深色背景）。 */
+        /** 把圆环仪表盘画成 Bitmap（含顶部信息、中央文字、底部用量、深色圆角背景）。 */
         private fun drawGauge(context: Context, data: WidgetData): Bitmap {
             val dp = context.resources.displayMetrics.density
-            val size = (160 * dp).toInt()
+            val size = (200 * dp).toInt()
             val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bitmap)
             val cx = size / 2f
             val cy = size / 2f
 
-            val percent = data.remainingPercent
-            val sweep = (percent * 360f).coerceIn(0f, 360f)
-
-            // 深色背景（圆角）
+            // 深色圆角背景
             val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.parseColor("#121212")
+                color = Color.parseColor("#16181D")
             }
-            val corner = (36 * dp)
+            val corner = 24 * dp
             canvas.drawRoundRect(RectF(0f, 0f, size.toFloat(), size.toFloat()), corner, corner, bg)
 
-            // 轨道（灰环底）
-            val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.STROKE
-                strokeWidth = 14 * dp
-                color = Color.parseColor("#2A2A2A")
-                strokeCap = Paint.Cap.ROUND
+            if (!data.hasData) {
+                // 无数据占位：轨道环 + 提示，不展示任何假数值
+                drawRing(canvas, cx, cy, dp, percent = 0f, colorA = Color.parseColor("#2B3038"), colorB = Color.parseColor("#2B3038"))
+                val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#9BA6B2")
+                    textSize = 16 * dp
+                    textAlign = Paint.Align.CENTER
+                }
+                canvas.drawText("暂无数据", cx, cy - 2 * dp, hintPaint)
+                val subPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#6B7480")
+                    textSize = 11 * dp
+                    textAlign = Paint.Align.CENTER
+                }
+                canvas.drawText("打开 App 刷新", cx, cy + 20 * dp, subPaint)
+                return bitmap
             }
-            val ringPadding = 24 * dp
-            val ringRect = RectF(ringPadding, ringPadding, size - ringPadding, size - ringPadding)
-            canvas.drawArc(ringRect, -90f, 360f, false, trackPaint)
 
-            // 进度环（依据剩余比例取色：多→绿，少→黄/红）
-            val ringColor = gaugeColor(percent)
-            val sweepShader = LinearGradient(
-                ringRect.left, ringRect.top, ringRect.right, ringRect.bottom,
-                ringColor, ringColor, Shader.TileMode.CLAMP
-            )
-            val gaugePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.STROKE
-                strokeWidth = 14 * dp
-                shader = sweepShader
-                strokeCap = Paint.Cap.ROUND
+            val percent = data.remainingPercent.coerceIn(0f, 1f)
+            val (colorA, colorB) = gaugeColors(percent)
+
+            // 顶部行：左标题 + 右余额
+            val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#8B95A1")
+                textSize = 12 * dp
+                textAlign = Paint.Align.LEFT
             }
-            val startAngle = -90f
-            // 留一点缺口，贴合参考图
-            canvas.drawArc(ringRect, startAngle, sweep, false, gaugePaint)
+            canvas.drawText("剩余免费流量", 18 * dp, 24 * dp, labelPaint)
+            val balPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#9BA6B2")
+                textSize = 12 * dp
+                textAlign = Paint.Align.RIGHT
+            }
+            canvas.drawText(String.format(Locale.US, "¥%.2f", data.balanceYuan), size - 18 * dp, 24 * dp, balPaint)
 
-            // 中心大百分比（缩号，避免压住圆环；基线置于内腔中上部）
-            val pctText = "${(percent * 100).toInt()}%"
+            // 圆环
+            drawRing(canvas, cx, cy, dp, percent, colorA, colorB)
+
+            // 中央：剩余百分比（超量时显示 0% 并标红）
             val pctPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.WHITE
-                textSize = 40 * dp
+                this.color = if (data.remainingGb < 0) Color.parseColor("#FF6E6E") else Color.WHITE
+                textSize = 38 * dp
                 typeface = Typeface.DEFAULT_BOLD
                 textAlign = Paint.Align.CENTER
             }
-            canvas.drawText(pctText, cx, cy - 6 * dp, pctPaint)
+            canvas.drawText("${(percent * 100).toInt()}%", cx, cy + 2 * dp, pctPaint)
 
-            // 下方剩余 GB
-            val gbText = String.format(Locale.US, "剩余 %.1fGB", data.remainingGb.coerceAtLeast(0.0))
+            // 中央下方：剩余 / 已超 GB
+            val gbText = if (data.remainingGb >= 0) {
+                String.format(Locale.US, "剩余 %.1f GB", data.remainingGb)
+            } else {
+                String.format(Locale.US, "已超 %.1f GB", -data.remainingGb)
+            }
             val gbPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.parseColor("#B0B0B0")
-                textSize = 18 * dp
-                textAlign = Paint.Align.CENTER
-            }
-            canvas.drawText(gbText, cx, cy + 28 * dp, gbPaint)
-
-            // 底部 E / F 刻度
-            val ePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.parseColor("#8090A0")
-                textSize = 16 * dp
-                textAlign = Paint.Align.CENTER
-            }
-            canvas.drawText("E", ringPadding + 6 * dp, size - 16 * dp, ePaint)
-            canvas.drawText("F", size - ringPadding - 6 * dp, size - 16 * dp, ePaint)
-
-            // 余额 → 左上角角落（更小字号，不占中心）
-            val balText = String.format(Locale.US, "¥%.2f", data.balanceYuan)
-            val balPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.parseColor("#90A0B0")
+                color = if (data.remainingGb < 0) Color.parseColor("#FF6E6E") else Color.parseColor("#B6BDC7")
                 textSize = 14 * dp
-                textAlign = Paint.Align.LEFT
+                textAlign = Paint.Align.CENTER
             }
-            canvas.drawText(balText, 14 * dp, 20 * dp, balPaint)
+            canvas.drawText(gbText, cx, cy + 26 * dp, gbPaint)
+
+            // 底部：本月已用 / 总量
+            val usedGb = Dashboard.MONTHLY_FREE_GB - data.remainingGb
+            val usedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#6B7480")
+                textSize = 11 * dp
+                textAlign = Paint.Align.CENTER
+            }
+            canvas.drawText(
+                String.format(Locale.US, "本月已用 %.1f / %d GB", usedGb.coerceAtLeast(0.0), Dashboard.MONTHLY_FREE_GB),
+                cx, size - 14 * dp, usedPaint
+            )
 
             return bitmap
         }
 
-        /** 剩余越多越绿；剩得少转黄，超量转红。 */
-        private fun gaugeColor(percent: Float): Int = when {
-            percent >= 0.5f -> Color.parseColor("#21D375")   // 绿
-            percent >= 0.25f -> Color.parseColor("#F5C518")  // 黄
-            else -> Color.parseColor("#FF5252")              // 红（含超量）
+        /** 画轨道环 + 渐变进度环（圆头，顶部起点）。 */
+        private fun drawRing(
+            canvas: Canvas, cx: Float, cy: Float, dp: Float,
+            percent: Float, colorA: Int, colorB: Int
+        ) {
+            val ringHalf = 72 * dp          // 环中心线半径
+            val stroke = 13 * dp
+            val rect = RectF(cx - ringHalf, cy - ringHalf, cx + ringHalf, cy + ringHalf)
+
+            val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = stroke
+                color = Color.parseColor("#2B3038")
+                strokeCap = Paint.Cap.ROUND
+            }
+            canvas.drawArc(rect, -90f, 360f, false, trackPaint)
+
+            val sweep = (percent * 360f).coerceIn(0f, 360f)
+            if (sweep <= 0f) return
+            val gaugePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = stroke
+                strokeCap = Paint.Cap.ROUND
+                shader = LinearGradient(
+                    rect.left, rect.bottom, rect.right, rect.top,
+                    colorA, colorB, Shader.TileMode.CLAMP
+                )
+            }
+            canvas.drawArc(rect, -90f, sweep, false, gaugePaint)
+        }
+
+        /** 剩余越多越绿；剩得少转黄，超量转红。返回渐变两端颜色。 */
+        private fun gaugeColors(percent: Float): Pair<Int, Int> = when {
+            percent >= 0.5f -> Color.parseColor("#3DDC84") to Color.parseColor("#00C853")  // 绿
+            percent >= 0.25f -> Color.parseColor("#FFD54F") to Color.parseColor("#FFB300") // 黄
+            else -> Color.parseColor("#FF6E6E") to Color.parseColor("#E53935")             // 红（含超量）
         }
     }
 }
