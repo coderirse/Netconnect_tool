@@ -14,6 +14,7 @@ class DashboardParser {
 
         val account = extractAccount(html, doc)
         val balance = extractBalance(html, doc)
+        val balanceYuan = extractBalanceYuan(html, doc)
         val trafficV4 = extractTrafficV4(html, doc)
         val trafficV6 = extractTrafficV6(html, doc)
 
@@ -21,6 +22,7 @@ class DashboardParser {
         val loginTime = extractJsVariable(html, "stime")?.trim().orEmpty()
         val ipv4 = extractJsVariable(html, "v4ip")?.trim().orEmpty()
         val ipv6 = extractJsVariable(html, "v6ip")?.trim().orEmpty()
+        val nickname = extractJsVariable(html, "NID")?.trim().orEmpty()
 
         val bulletin = doc.select("#wz .xykb_list").mapNotNull { element ->
             val dateText = element.select(".xykb_list_riqi span").text().trim()
@@ -45,7 +47,9 @@ class DashboardParser {
             loginTime = loginTime,
             ipv4 = ipv4,
             ipv6 = ipv6,
-            bulletin = bulletin
+            bulletin = bulletin,
+            balanceYuan = balanceYuan,
+            nickname = nickname
         )
     }
 
@@ -66,6 +70,22 @@ class DashboardParser {
             return String.format("%.2f 元", fee / 10000.0)
         }
         return ""
+    }
+
+    /**
+     * 余额数值（元）：优先 fee/10000.0（支持负值=欠费），再在余额元素文本内反解。
+     * 解析失败返回 null（而不是 0.0），避免把失败误当成"余额为 0"污染计费采样。
+     */
+    private fun extractBalanceYuan(html: String, doc: Document): Double? {
+        extractJsVariable(html, "fee")?.trim()?.toLongOrNull()?.let { fee ->
+            return fee / 10000.0
+        }
+        // 只在余额元素文本内反解（如 "-3.21 元"），避免匹配到公告等任意"xx元"文本
+        val text = doc.selectFirst("#user_usetime p")?.text()
+            ?: doc.selectFirst("#user_usetime")?.text()
+            ?: return null
+        return Regex("""(-?\d+\.?\d*)\s*元?""").find(text)
+            ?.groupValues?.getOrNull(1)?.toDoubleOrNull()
     }
 
     private fun extractTrafficV4(html: String, doc: Document): TrafficInfo {

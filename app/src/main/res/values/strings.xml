@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Net-USTB</string>
+    <string name="widget_gauge_desc">剩余流量仪表盘</string>
 </resources>

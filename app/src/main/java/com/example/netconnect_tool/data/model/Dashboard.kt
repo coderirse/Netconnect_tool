@@ -11,7 +11,9 @@ data class Dashboard(
     val loginTime: String,
     val ipv4: String,
     val ipv6: String,
-    val bulletin: List<BulletinItem>
+    val bulletin: List<BulletinItem>,
+    val balanceYuan: Double? = null,  // null = 解析失败（区别于余额真为 0）
+    val nickname: String = ""
 ) {
     val usedTimeDisplay: String
         get() {
@@ -27,6 +29,10 @@ data class Dashboard(
             if (remaining <= 0L) return "0 GB"
             return formatKb(remaining)
         }
+
+    /** 剩余免费流量（KB），可为负（超量时） */
+    val remainingFreeTrafficKb: Long
+        get() = MONTHLY_FREE_KB - usedTrafficV4Kb
 
     /** 计入配额的已用流量（仅 V4，格式化） */
     val usedQuotaTraffic: String

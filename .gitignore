@@ -28,6 +28,9 @@ Thumbs.db
 # Logs
 *.log
 
+# Built APKs (attached to GitHub Releases instead)
+*.apk
+
 # Sensitive credentials captured during development
 *.har
 nettrace.txt

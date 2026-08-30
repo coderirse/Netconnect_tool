@@ -1,7 +1,5 @@
 package com.example.netconnect_tool.ui
 
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,12 +20,11 @@ import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Campaign
-import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -35,7 +32,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -55,31 +52,43 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.netconnect_tool.data.UpdateChecker
+import com.example.netconnect_tool.data.model.BillingResult
 import com.example.netconnect_tool.data.model.BulletinItem
 import com.example.netconnect_tool.data.model.Dashboard
+import com.example.netconnect_tool.data.model.TrafficHistoryEntry
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
     viewModel: DashboardViewModel,
     onLoggedOut: () -> Unit,
-    onNeedLogin: () -> Unit
+    onNeedLogin: () -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
     val loggedOut by viewModel.loggedOut.collectAsStateWithLifecycle()
     val needLogin by viewModel.needLogin.collectAsStateWithLifecycle()
-    val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     val logoutError by viewModel.logoutError.collectAsStateWithLifecycle()
     val refreshError by viewModel.refreshError.collectAsStateWithLifecycle()
-    val context = LocalContext.current
+    val trafficHistory by viewModel.trafficHistory.collectAsStateWithLifecycle()
+    val historyMode by viewModel.historyMode.collectAsStateWithLifecycle()
+    val historyEmpty by viewModel.historyEmpty.collectAsStateWithLifecycle()
+    val billingResult by viewModel.billingResult.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // 回到前台时按需刷新（距上次拉取 >60s 才触发，见 DashboardViewModel.onResumeRefresh）
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        viewModel.onResumeRefresh()
+        onPauseOrDispose { }
+    }
 
     LaunchedEffect(loggedOut) {
         if (loggedOut) {
@@ -108,6 +117,12 @@ fun DashboardScreen(
             TopAppBar(
                 title = { Text("USTB 校园网") },
                 actions = {
+                    IconButton(
+                        onClick = onOpenSettings,
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(Icons.Filled.Settings, contentDescription = "设置")
+                    }
                     IconButton(
                         onClick = viewModel::refresh,
                         enabled = !isRefreshing
@@ -139,17 +154,14 @@ fun DashboardScreen(
                 )
                 is DashboardUiState.Success -> DashboardContent(
                     dashboard = state.dashboard,
+                    trafficHistory = trafficHistory,
+                    historyMode = historyMode,
+                    historyEmpty = historyEmpty,
+                    billingResult = billingResult,
                     onLogout = viewModel::logout,
-                    onCheckUpdate = viewModel::checkForUpdate,
-                    onOpenRepo = { openUrl(context, UpdateChecker.REPO_URL) }
+                    onSetHistoryMode = viewModel::setHistoryMode
                 )
             }
-
-            UpdateResultDialog(
-                state = updateState,
-                onDismiss = viewModel::dismissUpdateState,
-                onOpenRelease = { url -> openUrl(context, url) }
-            )
 
             if (logoutError != null) {
                 AlertDialog(
@@ -178,12 +190,6 @@ fun DashboardScreen(
             }
         }
     }
-}
-
-private fun openUrl(context: android.content.Context, url: String) {
-    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    context.startActivity(intent)
 }
 
 @Composable
@@ -219,9 +225,12 @@ private fun ErrorView(message: String, onRetry: () -> Unit) {
 @Composable
 private fun DashboardContent(
     dashboard: Dashboard,
+    trafficHistory: List<TrafficHistoryEntry>,
+    historyMode: HistoryMode,
+    historyEmpty: Boolean,
+    billingResult: BillingResult,
     onLogout: () -> Unit,
-    onCheckUpdate: () -> Unit,
-    onOpenRepo: () -> Unit
+    onSetHistoryMode: (HistoryMode) -> Unit
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -230,7 +239,50 @@ private fun DashboardContent(
     ) {
         // 主卡片：剩余免费流量 + 进度
         item {
-            TrafficHeroCard(dashboard)
+            TrafficHeroCard(dashboard, billingResult)
+        }
+
+        // 流量历史趋势图（默认按小时，可切换按天）
+        item {
+            Column {
+                // 模式切换
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "用网趋势",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(Modifier.weight(1f))
+                    FilterChip(
+                        selected = historyMode == HistoryMode.HOURLY,
+                        onClick = { onSetHistoryMode(HistoryMode.HOURLY) },
+                        label = { Text("按小时") },
+                        modifier = Modifier.padding(end = 4.dp)
+                    )
+                    FilterChip(
+                        selected = historyMode == HistoryMode.DAILY,
+                        onClick = { onSetHistoryMode(HistoryMode.DAILY) },
+                        label = { Text("按天") }
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                if (historyEmpty) {
+                    Text(
+                        text = if (historyMode == HistoryMode.HOURLY)
+                            "暂无近 24 小时数据，稍后再看" else "暂无近 30 天数据，稍后再看",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline,
+                        modifier = Modifier.padding(16.dp)
+                    )
+                } else {
+                    TrafficHistoryChart(trafficHistory, historyMode)
+                }
+            }
         }
 
         // 余额 + 时长
@@ -303,44 +355,7 @@ private fun DashboardContent(
             }
         }
 
-        // 仓库地址 + 检查更新
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                FilledTonalButton(
-                    onClick = onOpenRepo,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(52.dp),
-                    shape = RoundedCornerShape(26.dp)
-                ) {
-                    Icon(
-                        Icons.Filled.Code,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("GitHub 仓库")
-                }
-                FilledTonalButton(
-                    onClick = onCheckUpdate,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(52.dp),
-                    shape = RoundedCornerShape(26.dp)
-                ) {
-                    Icon(
-                        Icons.Filled.SystemUpdate,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("检查更新")
-                }
-            }
-        }
+        // 仓库地址 + 检查更新已迁至设置页，主页保持精简
 
         // 校园看板
         if (dashboard.bulletin.isNotEmpty()) {
@@ -389,9 +404,9 @@ private fun DashboardContent(
     }
 }
 
-/** 主卡片：剩余免费流量大字 + 本月用量进度条 */
+/** 主卡片：剩余免费流量大字 + 本月用量进度条 + 计费小字 */
 @Composable
-private fun TrafficHeroCard(dashboard: Dashboard) {
+private fun TrafficHeroCard(dashboard: Dashboard, billing: BillingResult) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(28.dp),
@@ -404,6 +419,16 @@ private fun TrafficHeroCard(dashboard: Dashboard) {
                 .fillMaxWidth()
                 .padding(20.dp)
         ) {
+            // 问候语：按周几变化，后续增改文案只需改 GreetingPool
+            if (dashboard.nickname.isNotBlank()) {
+                Text(
+                    text = "你好，${dashboard.nickname}，${GreetingPool.greetingForToday()}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Spacer(Modifier.height(12.dp))
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     Icons.Filled.Wifi,
@@ -446,6 +471,14 @@ private fun TrafficHeroCard(dashboard: Dashboard) {
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
             )
+
+            // 计费小字：本月已消耗余额 + 预估单价（扣费为 0 显示"积累中"）
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = billingText(billing),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+            )
         }
     }
 }
@@ -485,7 +518,10 @@ private fun StatCard(
             Text(
                 text = value,
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                fontSize = autoSizeFontSize(value)
             )
         }
     }
@@ -579,7 +615,7 @@ private fun BulletinCard(item: BulletinItem) {
 }
 
 @Composable
-private fun UpdateResultDialog(
+internal fun UpdateResultDialog(
     state: UpdateState,
     onDismiss: () -> Unit,
     onOpenRelease: (String) -> Unit
@@ -636,4 +672,27 @@ private fun UpdateResultDialog(
             )
         }
     }
+}
+
+/** 计费小字：本月已消耗余额（按 0.6 元/GB 超量估算）+ 算法预估单价（积累够数据才显示）。 */
+private fun billingText(billing: BillingResult): String {
+    val estCost = String.format(Locale.US, "%.2f", billing.estimatedCostYuan)
+    return if (billing.showPrice) {
+        val price = String.format(Locale.US, "%.2f", billing.unitPriceYuanPerGb)
+        "本月已消耗余额 ≈$estCost 元 · 预估单价 $price 元/GB"
+    } else {
+        "本月已消耗余额 ≈$estCost 元 · 预估单价积累中"
+    }
+}
+
+/**
+ * 依据文本长度自动调整字号，避免长文本（如"353 小时 34 分钟"）在卡片内换行。
+ * 字符越多字号越小，设下限防过小。基准为 titleMedium ≈ 16sp。
+ */
+private fun autoSizeFontSize(text: String) = when {
+    text.length <= 8 -> 16.sp
+    text.length <= 14 -> 15.sp
+    text.length <= 20 -> 14.sp
+    text.length <= 26 -> 13.sp
+    else -> 12.sp
 }
