@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -291,20 +292,27 @@ private fun DashboardContent(
                         fontWeight = FontWeight.SemiBold
                     )
                     Spacer(Modifier.weight(1f))
-                    SingleChoiceSegmentedButtonRow {
+                    // 显式最小宽度：SegmentedButtonRow 内部按权重等分宽度，
+                    // wrap-content 时会把"按小时"挤压截断
+                    SingleChoiceSegmentedButtonRow(
+                        modifier = Modifier.widthIn(min = 172.dp)
+                    ) {
                         SegmentedButton(
                             selected = historyMode == HistoryMode.HOURLY,
                             onClick = { onSetHistoryMode(HistoryMode.HOURLY) },
-                            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+                            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                            // 隐藏选中态对勾：窄按钮上它会把"按小时"挤成两行
+                            icon = {}
                         ) {
-                            Text("按小时")
+                            Text("按小时", maxLines = 1)
                         }
                         SegmentedButton(
                             selected = historyMode == HistoryMode.DAILY,
                             onClick = { onSetHistoryMode(HistoryMode.DAILY) },
-                            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+                            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                            icon = {}
                         ) {
-                            Text("按天")
+                            Text("按天", maxLines = 1)
                         }
                     }
                 }

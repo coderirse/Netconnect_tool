@@ -21,6 +21,13 @@
 
 # ---------- 第三方缺口 ----------
 
+# Room 通过反射实例化 *_Impl 的无参构造器（WorkManager 内嵌的 WorkDatabase 同理）。
+# 缺这条规则 R8 会裁掉构造器 → 启动即闪退 NoSuchMethodException WorkDatabase_Impl.<init>
+-keep class * extends androidx.room.RoomDatabase {
+    public <init>();
+}
+-dontwarn androidx.room.paging.**
+
 # jsoup 1.18 未携带 consumer rules
 -dontwarn org.jsoup.**
 -keep class org.jsoup.** { *; }
