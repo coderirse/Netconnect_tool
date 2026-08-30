@@ -22,7 +22,7 @@ class TrafficSnapshotWorker(
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
-        val client = CampusNetworkClient()
+        val client = CampusNetworkClient(applicationContext)
         val historyStore = TrafficHistoryStore(applicationContext)
         val billingStore = BillingStore(applicationContext)
         val appSettings = AppSettings(applicationContext)

@@ -69,8 +69,12 @@ data class BillingResult(
     /** 是否已观察到有效扣费——单价大于 0 才显示，否则 UI 显示"积累中" */
     val showPrice: Boolean get() = hasData && unitPriceYuanPerGb > 0.0
 
-    /** 按已知单价（0.6 元/GB，待验证）估算的本月流量消费 */
-    val estimatedCostYuan: Double get() = overGb * BillingCalculator.ASSUMED_PRICE_YUAN_PER_GB
+    /**
+     * 按预估单价估算的本月流量消费。已观察到有效单价（showPrice）时用算法单价，
+     * 口径与旁边展示的"预估单价"一致；冷启动无单价时才用打听的固定 0.6 元/GB 兜底。
+     */
+    val estimatedCostYuan: Double
+        get() = overGb * if (showPrice) unitPriceYuanPerGb else BillingCalculator.ASSUMED_PRICE_YUAN_PER_GB
 }
 
 /**

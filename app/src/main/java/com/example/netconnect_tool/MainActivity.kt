@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        val client = CampusNetworkClient()
+        val client = CampusNetworkClient(applicationContext)
         val credentialStore = CredentialStore(this)
         val appSettings = AppSettings(this)
         val trafficHistoryStore = TrafficHistoryStore(this)
@@ -132,6 +132,7 @@ private fun AppNavigation(
         composable("dashboard") {
             val viewModel: DashboardViewModel = viewModel {
                 DashboardViewModel(
+                    context = context.applicationContext,
                     client = client,
                     appSettings = appSettings,
                     credentialStore = credentialStore,
@@ -154,11 +155,15 @@ private fun AppNavigation(
         }
         composable("settings") {
             val viewModel: SettingsViewModel = viewModel {
-                SettingsViewModel(appSettings = appSettings, billingStore = billingStore)
+                SettingsViewModel(
+                    appSettings = appSettings,
+                    billingStore = billingStore,
+                    credentialStore = credentialStore,
+                    currentVersion = currentVersion
+                )
             }
             SettingsScreen(
                 viewModel = viewModel,
-                currentVersion = currentVersion,
                 onBack = { navController.popBackStack() }
             )
         }

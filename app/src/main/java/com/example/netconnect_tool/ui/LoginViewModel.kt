@@ -23,14 +23,14 @@ data class LoginUiState(
 
 class LoginViewModel(
     private val client: CampusNetworkClient,
-    private val credentialStore: CredentialStore? = null
+    private val credentialStore: CredentialStore
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(LoginUiState())
     val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
 
     init {
-        credentialStore?.getCredentials()?.let { saved ->
+        credentialStore.getCredentials()?.let { saved ->
             _uiState.update {
                 it.copy(
                     account = saved.account,
@@ -70,7 +70,7 @@ class LoginViewModel(
             val result = client.login(current.account, current.password, current.carrier)
             result
                 .onSuccess { dashboard ->
-                    credentialStore?.saveCredentials(
+                    credentialStore.saveCredentials(
                         account = current.account,
                         password = current.password,
                         carrier = current.carrier

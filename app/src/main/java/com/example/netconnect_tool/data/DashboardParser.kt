@@ -5,6 +5,7 @@ import com.example.netconnect_tool.data.model.BulletinItem
 import com.example.netconnect_tool.data.model.Dashboard
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
+import java.util.Locale
 
 class DashboardParser {
 
@@ -20,8 +21,8 @@ class DashboardParser {
 
         val usedTime = extractJsVariable(html, "time")?.trim()?.toLongOrNull() ?: 0L
         val loginTime = extractJsVariable(html, "stime")?.trim().orEmpty()
-        val ipv4 = extractJsVariable(html, "v4ip")?.trim().orEmpty()
-        val ipv6 = extractJsVariable(html, "v6ip")?.trim().orEmpty()
+        val ipv4 = extractJsVariable(html, "v4ip")?.trim().orEmpty().normalizeIp()
+        val ipv6 = extractJsVariable(html, "v6ip")?.trim().orEmpty().normalizeIp()
         val nickname = extractJsVariable(html, "NID")?.trim().orEmpty()
 
         val bulletin = doc.select("#wz .xykb_list").mapNotNull { element ->
@@ -53,6 +54,15 @@ class DashboardParser {
         )
     }
 
+    /**
+     * 占位 IP 归一为空串：portal 在"未获取"时会给 v6ip='::' / v4ip='0.0.0.0'，
+     * 原样展示对用户毫无意义；置空后 UI 的 isNotBlank 判断会自动隐藏该行。
+     */
+    private fun String.normalizeIp(): String = when (this) {
+        "::", "0.0.0.0", "0:0:0:0:0:0:0:0" -> ""
+        else -> this
+    }
+
     private fun extractAccount(html: String, doc: Document): String {
         doc.selectFirst("#user_account p")?.text()?.trim()?.let { if (it.isNotBlank()) return it }
         doc.selectFirst("#user_account")?.text()?.trim()?.let { if (it.isNotBlank()) return it }
@@ -67,7 +77,7 @@ class DashboardParser {
         Regex("""id=["']user_usetime["'][^>]*>\s*<p[^>]*>([^<]+)</p>""").find(html)?.groupValues?.getOrNull(1)?.trim()?.let { return it }
         // JS 变量 fee='179300' → 17.93 元
         extractJsVariable(html, "fee")?.trim()?.toLongOrNull()?.let { fee ->
-            return String.format("%.2f 元", fee / 10000.0)
+            return String.format(Locale.US, "%.2f 元", fee / 10000.0)
         }
         return ""
     }
@@ -162,8 +172,8 @@ class DashboardParser {
 
     private fun formatTraffic(kb: Long): String {
         return when {
-            kb >= 1024 * 1024 -> String.format("%.2f GB", kb / (1024.0 * 1024.0))
-            kb >= 1024 -> String.format("%.2f MB", kb / 1024.0)
+            kb >= 1024 * 1024 -> String.format(Locale.US, "%.2f GB", kb / (1024.0 * 1024.0))
+            kb >= 1024 -> String.format(Locale.US, "%.2f MB", kb / 1024.0)
             else -> "$kb KB"
         }
     }
