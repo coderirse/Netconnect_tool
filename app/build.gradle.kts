@@ -26,8 +26,8 @@ android {
         applicationId = "com.example.netconnect_tool"
         minSdk = 24
         targetSdk = 36
-        versionCode = 13
-        versionName = "1.0.12"
+        versionCode = 14
+        versionName = "1.0.13"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -49,10 +49,15 @@ android {
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
             }
-            // ⚠️ 明确关闭 R8 / 代码压缩，与项目现状保持一致（严禁开启）
-            optimization {
-                enable = false
-            }
+            // v1.0.13 起开启 R8 混淆 + 资源收缩，缩小体积并去除无用代码。
+            // 反射点已排查（详见 proguard-rules.pro），依赖库均自带 consumer 规则。
+            // （optimization.enable 是 AGP9 实验性 gradual R8，需额外 flag，暂不采用）
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
     compileOptions {

@@ -43,6 +43,8 @@ class BillingCalculatorTest {
         assertEquals(2.0, r.costYuan, 0.001)
         assertEquals(15.0, r.overGb, 0.001)  // 展示用：最新总超量
         assertEquals(0.4, r.unitPriceYuanPerGb, 0.001)
+        // 有效单价存在时，估算消费用算法单价（与展示的"预估单价"口径一致）：15 × 0.4 = 6 元
+        assertEquals(6.0, r.estimatedCostYuan, 0.001)
     }
 
     @Test
